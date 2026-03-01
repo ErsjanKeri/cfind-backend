@@ -181,12 +181,20 @@ class UserListItem(BaseSchema):
     email: Optional[str] = None
     role: str
     email_verified: bool
+    phone_number: Optional[str] = None
+    company_name: Optional[str] = None
+    image: Optional[str] = None
     created_at: datetime
 
     # Agent-specific (if role = agent)
     verification_status: Optional[str] = None
-    company_name: Optional[str] = None
     credit_balance: Optional[int] = None
+    license_number: Optional[str] = None
+    whatsapp_number: Optional[str] = None
+    bio_en: Optional[str] = None
+    license_document_url: Optional[str] = None
+    company_document_url: Optional[str] = None
+    id_document_url: Optional[str] = None
 
 
 class AdminUsersListResponse(BaseSchema):

@@ -299,6 +299,12 @@ async def get_all_users(
             item = item.model_copy(update={
                 "verification_status": user.agent_profile.verification_status,
                 "credit_balance": user.agent_profile.credit_balance,
+                "license_number": user.agent_profile.license_number,
+                "whatsapp_number": user.agent_profile.whatsapp_number,
+                "bio_en": user.agent_profile.bio_en,
+                "license_document_url": user.agent_profile.license_document_url,
+                "company_document_url": user.agent_profile.company_document_url,
+                "id_document_url": user.agent_profile.id_document_url,
             })
         users_list.append(item)
 

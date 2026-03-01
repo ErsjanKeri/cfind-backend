@@ -139,7 +139,14 @@ async def create_listing(
         db.add(image)
 
     await db.commit()
-    await db.refresh(listing)
+
+    # Re-fetch with images relationship loaded (db.refresh doesn't load relationships)
+    result = await db.execute(
+        select(Listing)
+        .options(selectinload(Listing.images))
+        .where(Listing.id == listing.id)
+    )
+    listing = result.scalar_one()
 
     logger.info(f"Created listing: {listing.id} by agent {agent_id}")
     return listing
@@ -451,7 +458,14 @@ async def update_listing(
     listing.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
-    await db.refresh(listing)
+
+    # Re-fetch with images relationship loaded (db.refresh doesn't load relationships)
+    result = await db.execute(
+        select(Listing)
+        .options(selectinload(Listing.images))
+        .where(Listing.id == listing.id)
+    )
+    listing = result.scalar_one()
 
     logger.info(f"Updated listing: {listing_id}")
     return listing

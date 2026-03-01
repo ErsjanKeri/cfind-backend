@@ -83,26 +83,6 @@ class TokenAlreadyUsedException(HTTPException):
         )
 
 
-class ResourceNotFoundException(HTTPException):
-    """Raised when requested resource is not found."""
-
-    def __init__(self, resource: str):
-        super().__init__(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"{resource} not found."
-        )
-
-
-class UnauthorizedActionException(HTTPException):
-    """Raised when user tries to perform action they're not authorized for."""
-
-    def __init__(self):
-        super().__init__(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You are not authorized to perform this action."
-        )
-
-
 class InvalidCredentialsException(HTTPException):
     """Raised on login with invalid email/password."""
 

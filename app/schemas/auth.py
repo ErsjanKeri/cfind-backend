@@ -4,6 +4,8 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional
 
 from app.schemas.base import BaseSchema
+from app.schemas.user import UserResponse
+from app.core.security import validate_password_strength
 
 
 # ============================================================================
@@ -27,19 +29,15 @@ class RegisterRequest(BaseModel):
     whatsapp: Optional[str] = Field(None, min_length=8, max_length=20)
     bio_en: Optional[str] = Field(None, max_length=1000)
 
+    # Document URLs (required for agent registration)
+    license_document_url: Optional[str] = None
+    company_document_url: Optional[str] = None
+    id_document_url: Optional[str] = None
+
     @field_validator("password")
     @classmethod
     def validate_password(cls, v: str) -> str:
-        """Validate password strength."""
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters")
-        if not any(c.isupper() for c in v):
-            raise ValueError("Password must contain at least one uppercase letter")
-        if not any(c.islower() for c in v):
-            raise ValueError("Password must contain at least one lowercase letter")
-        if not any(c.isdigit() for c in v):
-            raise ValueError("Password must contain at least one number")
-        return v
+        return validate_password_strength(v)
 
     @field_validator("role")
     @classmethod
@@ -96,7 +94,7 @@ class LoginResponse(BaseSchema):
 
     success: bool = True
     message: str = "Login successful"
-    user: dict  # User details (id, email, name, role, etc.)
+    user: UserResponse
 
 
 # ============================================================================
@@ -171,16 +169,7 @@ class PasswordResetRequest(BaseModel):
     @field_validator("new_password")
     @classmethod
     def validate_password(cls, v: str) -> str:
-        """Validate password strength."""
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters")
-        if not any(c.isupper() for c in v):
-            raise ValueError("Password must contain at least one uppercase letter")
-        if not any(c.islower() for c in v):
-            raise ValueError("Password must contain at least one lowercase letter")
-        if not any(c.isdigit() for c in v):
-            raise ValueError("Password must contain at least one number")
-        return v
+        return validate_password_strength(v)
 
     model_config = {
         "json_schema_extra": {

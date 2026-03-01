@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 from jose import JWTError
 
 from app.db.session import get_db
-from app.models.user import User, AgentProfile
+from app.models.user import User
 from app.core.security import decode_token
 from app.core.exceptions import (
     EmailNotVerifiedException,
@@ -88,7 +88,6 @@ async def get_current_user(
         result = await db.execute(
             select(User)
             .options(selectinload(User.agent_profile))
-            # buyer_profile removed - buyer fields are in User table
             .where(User.id == user_id)
         )
         user = result.scalar_one_or_none()
@@ -262,11 +261,21 @@ class RoleChecker:
         return current_user
 
 
-# Convenience role checkers
-require_buyer = Depends(RoleChecker(["buyer"]))
-require_agent = Depends(RoleChecker(["agent"]))
-require_admin = Depends(RoleChecker(["admin"]))
-require_agent_or_admin = Depends(RoleChecker(["agent", "admin"]))
+# ============================================================================
+# OWNERSHIP CHECK
+# ============================================================================
+
+def ensure_owner_or_admin(
+    resource_owner_id: str,
+    current_user: User,
+    detail: str = "Not authorized"
+) -> None:
+    """Raise 403 if current_user is neither the resource owner nor an admin."""
+    if str(resource_owner_id) != str(current_user.id) and current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=detail
+        )
 
 
 # ============================================================================
@@ -275,75 +284,39 @@ require_agent_or_admin = Depends(RoleChecker(["agent", "admin"]))
 
 async def get_verified_agent(
     current_user: Annotated[User, Depends(get_verified_user)],
-    db: AsyncSession = Depends(get_db)
 ) -> User:
     """
     Ensure user is an agent with 'approved' verification status and all documents uploaded.
 
-    CRITICAL: Always re-fetches agent profile from database.
-    Never trust JWT claims for verification status (may be stale).
-
-    This dependency is required for:
-    - Creating listings
-    - Claiming buyer demands
-    - Promoting listings
-    - Any agent-only operation requiring verification
-
-    Args:
-        current_user: Authenticated and email-verified user
-        db: Database session (injected)
-
-    Returns:
-        User object (agent with approved status and complete documents)
+    Uses the agent_profile already eagerly loaded by get_current_user
+    (via selectinload). No extra DB query needed.
 
     Raises:
         HTTPException 403: If user is not an agent
         HTTPException 404: If agent profile not found
         AgentNotVerifiedException: If verification status is not "approved"
         AgentDocumentsIncompleteException: If any required document is missing
-
-    Example:
-        @app.post("/listings")
-        async def create_listing(
-            data: ListingCreate,
-            current_user: Annotated[User, Depends(get_verified_agent)],
-            _: None = Depends(verify_csrf_token)
-        ):
-            # User is:
-            # - Authenticated
-            # - Email verified
-            # - Role = agent
-            # - Verification status = approved
-            # - All 3 documents uploaded
-            # - CSRF token valid
-            ...
     """
-    # Check role
+    # Admins bypass agent verification checks
+    if current_user.role == "admin":
+        return current_user
+
     if current_user.role != "agent":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Agent access required."
         )
 
-    # CRITICAL: Re-fetch agent profile from database
-    # JWT claims may be stale (verification status changed after login)
-    result = await db.execute(
-        select(AgentProfile)
-        .where(AgentProfile.user_id == current_user.id)
-    )
-    agent_profile = result.scalar_one_or_none()
-
+    agent_profile = current_user.agent_profile
     if not agent_profile:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Agent profile not found."
         )
 
-    # Check verification status (single source of truth)
     if agent_profile.verification_status != "approved":
         raise AgentNotVerifiedException()
 
-    # Check all required documents are uploaded
     if not all([
         agent_profile.license_document_url,
         agent_profile.company_document_url,

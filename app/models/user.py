@@ -35,13 +35,9 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    # Relationships
-    sessions = relationship("Session", back_populates="user", cascade="all, delete-orphan")
-
     # Profile Relations
     # Agents have extended profile for verification/documents
     agent_profile = relationship("AgentProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
-    # BuyerProfile removed - buyer fields are now in User table
 
     # Data Relations
     listings = relationship("Listing", back_populates="agent", cascade="all, delete-orphan")
@@ -75,8 +71,6 @@ class AgentProfile(Base):
     - Updating license_number
     - Uploading new documents
 
-    Note: agency_name removed - use User.company_name instead!
-    Note: phone_number removed - use User.phone_number instead!
     """
 
     __tablename__ = "agent_profiles"
@@ -115,28 +109,3 @@ class AgentProfile(Base):
 
     def __repr__(self):
         return f"<AgentProfile(user_id={self.user_id}, status={self.verification_status})>"
-
-
-# BuyerProfile class REMOVED - buyer fields moved to User table
-# Migration: 20260127_150000_simplify_user_profiles.py
-
-
-class Session(Base):
-    """
-    NextAuth-compatible session model.
-    Note: For FastAPI JWT auth, we use RefreshToken model instead.
-    This is kept for potential compatibility/migration purposes.
-    """
-
-    __tablename__ = "sessions"
-
-    id = Column(String, primary_key=True)
-    session_token = Column(String, unique=True, nullable=False)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    expires = Column(DateTime(timezone=True), nullable=False)
-
-    # Relationships
-    user = relationship("User", back_populates="sessions")
-
-    def __repr__(self):
-        return f"<Session(id={self.id}, user_id={self.user_id})>"

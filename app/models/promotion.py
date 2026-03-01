@@ -116,9 +116,8 @@ class CreditPackage(Base):
     name = Column(String, nullable=False)  # "Starter", "Basic", "Standard", "Pro", "Agency"
     credits = Column(Integer, nullable=False)  # Number of credits in package
 
-    # Pricing (dual currency)
+    # Pricing (EUR only)
     price_eur = Column(Numeric(precision=10, scale=2), nullable=False)
-    price_lek = Column(Numeric(precision=12, scale=2), nullable=False)
 
     # Display settings
     is_popular = Column(Boolean, default=False, nullable=False)  # Show "Popular" badge

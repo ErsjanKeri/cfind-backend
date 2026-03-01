@@ -89,11 +89,6 @@ class Settings(BaseSettings):
     CRON_SECRET: Optional[str] = None
 
     # ========================================================================
-    # CURRENCY
-    # ========================================================================
-    EUR_TO_LEK_RATE: float = 100.0  # Initial rate, updated daily
-
-    # ========================================================================
     # PYDANTIC SETTINGS CONFIG
     # ========================================================================
     model_config = SettingsConfigDict(

@@ -11,7 +11,7 @@ Endpoints:
 """
 
 from typing import Annotated, Optional
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -28,9 +28,11 @@ from app.api.deps import (
     get_current_user_optional,
     get_verified_agent,
     verify_csrf_token,
-    RoleChecker
+    RoleChecker,
+    ensure_owner_or_admin
 )
-from app.services import listing_service
+from app.repositories import listing_repo
+from app.repositories.user_repo import get_user_by_id
 
 # Initialize router
 router = APIRouter(prefix="/listings", tags=["Listings"])
@@ -55,10 +57,6 @@ async def search_listings(
     # Price range (EUR)
     min_price_eur: Optional[float] = Query(None, ge=0, description="Minimum price in EUR"),
     max_price_eur: Optional[float] = Query(None, ge=0, description="Maximum price in EUR"),
-
-    # Price range (LEK)
-    min_price_lek: Optional[float] = Query(None, ge=0, description="Minimum price in LEK"),
-    max_price_lek: Optional[float] = Query(None, ge=0, description="Maximum price in LEK"),
 
     # ROI range
     min_roi: Optional[float] = Query(None, ge=0, description="Minimum ROI percentage"),
@@ -111,8 +109,6 @@ async def search_listings(
         area=area,
         min_price_eur=min_price_eur,
         max_price_eur=max_price_eur,
-        min_price_lek=min_price_lek,
-        max_price_lek=max_price_lek,
         min_roi=min_roi,
         max_roi=max_roi,
         search=search,
@@ -123,7 +119,8 @@ async def search_listings(
     )
 
     # Execute search
-    listings, total, total_pages = await listing_service.search_listings(db, search_params)
+    listings, total = await listing_repo.get_listings(db, search_params, mode="public")
+    total_pages = (total + limit - 1) // limit
 
     return ListingSearchResponse(
         success=True,
@@ -161,11 +158,17 @@ async def get_listing(
     **Note:** This endpoint does NOT require authentication.
     Public listings are accessible to everyone.
     """
-    listing_dict = await listing_service.get_listing_detail(
-        db,
-        listing_id,
-        current_user
-    )
+    result = await listing_repo.get_listing_by_id(db, listing_id, mode="public")
+    if not result:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found")
+
+    listing, agent = result
+
+    # Owner or admin sees private view, everyone else sees public
+    if current_user and (str(listing.agent_id) == str(current_user.id) or current_user.role == "admin"):
+        listing_dict = listing_repo.transform_private_listing(listing, agent)
+    else:
+        listing_dict = listing_repo.transform_public_listing(listing, agent)
 
     return {
         "success": True,
@@ -207,11 +210,24 @@ async def create_listing(
 
     **Returns:** Private view (creator sees full details including real business name)
     """
-    listing_dict = await listing_service.create_listing_service(
-        db,
-        current_user,
-        listing_data
-    )
+    # Determine agent_id (admin can create on behalf of another agent)
+    # Note: get_verified_agent already ensures user is a verified agent OR admin
+    if current_user.role == "admin" and listing_data.agent_id:
+        agent_id = listing_data.agent_id
+        target_agent = await get_user_by_id(db, agent_id, include_profiles=True)
+        if not target_agent or target_agent.role != "agent":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid agent ID")
+    else:
+        agent_id = str(current_user.id)
+
+    # Validate images
+    if not listing_data.images or len(listing_data.images) == 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one image is required")
+
+    # Create listing and return private view
+    listing = await listing_repo.create_listing(db, agent_id, listing_data)
+    agent = await get_user_by_id(db, agent_id, include_profiles=True)
+    listing_dict = listing_repo.transform_private_listing(listing, agent)
 
     return ListingCreateResponse(
         success=True,
@@ -252,12 +268,23 @@ async def update_listing(
 
     **Returns:** Private view (owner sees full details)
     """
-    listing_dict = await listing_service.update_listing_service(
-        db,
-        current_user,
-        listing_id,
-        update_data
-    )
+    # Fetch listing
+    result = await listing_repo.get_listing_by_id(db, listing_id, mode="private")
+    if not result:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found")
+
+    listing, agent = result
+
+    ensure_owner_or_admin(listing.agent_id, current_user, "You are not authorized to update this listing")
+
+    # Admin-only field
+    if update_data.is_physically_verified is not None and current_user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can set physical verification status")
+
+    # Update and return private view
+    updated_listing = await listing_repo.update_listing(db, listing_id, update_data)
+    agent_refreshed = await get_user_by_id(db, str(updated_listing.agent_id), include_profiles=True)
+    listing_dict = listing_repo.transform_private_listing(updated_listing, agent_refreshed)
 
     return ListingUpdateResponse(
         success=True,
@@ -295,11 +322,16 @@ async def delete_listing(
     - All saved listings bookmarks
     - All promotion history
     """
-    await listing_service.delete_listing_service(
-        db,
-        current_user,
-        listing_id
-    )
+    # Fetch listing
+    result = await listing_repo.get_listing_by_id(db, listing_id, mode="private")
+    if not result:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found")
+
+    listing, agent = result
+
+    ensure_owner_or_admin(listing.agent_id, current_user, "You are not authorized to delete this listing")
+
+    await listing_repo.delete_listing(db, listing_id)
 
     return ListingDeleteResponse(
         success=True,
@@ -334,11 +366,9 @@ async def get_agent_listings(
     - Private view (full details including real business name)
     - Sorted by creation date (newest first)
     """
-    listings = await listing_service.get_agent_listings_service(
-        db,
-        agent_id,
-        current_user
-    )
+    ensure_owner_or_admin(agent_id, current_user, "You are not authorized to view these listings")
+
+    listings = await listing_repo.get_agent_listings(db, agent_id)
 
     return AgentListingsResponse(
         success=True,

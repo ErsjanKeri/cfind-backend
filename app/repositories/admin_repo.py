@@ -10,19 +10,20 @@ Handles:
 
 import logging
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, func, and_
 from sqlalchemy.orm import selectinload
 from fastapi import HTTPException, status
 import uuid
 
-from app.models.user import User, AgentProfile  # BuyerProfile removed
+from app.models.user import User, AgentProfile
 from app.models.listing import Listing
 from app.models.lead import Lead
 from app.models.demand import BuyerDemand
 from app.models.promotion import PromotionHistory, CreditTransaction
 from app.core.security import hash_password
+from app.schemas.admin import PlatformStats, UserListItem
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ async def verify_agent(
 
     # Approve agent
     agent_profile.verification_status = "approved"
-    agent_profile.verified_at = datetime.now(datetime.now().astimezone().tzinfo)
+    agent_profile.verified_at = datetime.now(timezone.utc)
     agent_profile.rejection_reason = None
     agent_profile.rejected_at = None
     agent_profile.rejected_by = None
@@ -119,7 +120,7 @@ async def reject_agent(
     # Reject agent
     agent_profile.verification_status = "rejected"
     agent_profile.rejection_reason = rejection_reason
-    agent_profile.rejected_at = datetime.now(datetime.now().astimezone().tzinfo)
+    agent_profile.rejected_at = datetime.now(timezone.utc)
     agent_profile.rejected_by = rejected_by
     agent_profile.verified_at = None
 
@@ -134,7 +135,7 @@ async def reject_agent(
 # PLATFORM STATISTICS
 # ============================================================================
 
-async def get_platform_stats(db: AsyncSession) -> dict:
+async def get_platform_stats(db: AsyncSession) -> PlatformStats:
     """
     Get platform-wide statistics.
 
@@ -149,11 +150,7 @@ async def get_platform_stats(db: AsyncSession) -> dict:
         db: Database session
 
     Returns:
-        Dict with platform statistics
-
-    Example:
-        >>> stats = await get_platform_stats(db)
-        >>> print(f"Total users: {stats['total_users']}")
+        PlatformStats model
     """
     # Users count
     total_users_result = await db.execute(select(func.count(User.id)))
@@ -239,27 +236,27 @@ async def get_platform_stats(db: AsyncSession) -> dict:
     total_credit_txns_result = await db.execute(select(func.count(CreditTransaction.id)))
     total_credit_transactions = total_credit_txns_result.scalar()
 
-    return {
-        "total_users": total_users,
-        "total_buyers": total_buyers,
-        "total_agents": total_agents,
-        "total_admins": total_admins,
-        "agents_pending": agents_pending,
-        "agents_approved": agents_approved,
-        "agents_rejected": agents_rejected,
-        "total_listings": total_listings,
-        "active_listings": active_listings,
-        "draft_listings": draft_listings,
-        "sold_listings": sold_listings,
-        "inactive_listings": inactive_listings,
-        "total_leads": total_leads,
-        "total_demands": total_demands,
-        "active_demands": active_demands,
-        "assigned_demands": assigned_demands,
-        "fulfilled_demands": fulfilled_demands,
-        "active_promotions": active_promotions,
-        "total_credit_transactions": total_credit_transactions
-    }
+    return PlatformStats(
+        total_users=total_users,
+        total_buyers=total_buyers,
+        total_agents=total_agents,
+        total_admins=total_admins,
+        agents_pending=agents_pending,
+        agents_approved=agents_approved,
+        agents_rejected=agents_rejected,
+        total_listings=total_listings,
+        active_listings=active_listings,
+        draft_listings=draft_listings,
+        sold_listings=sold_listings,
+        inactive_listings=inactive_listings,
+        total_leads=total_leads,
+        total_demands=total_demands,
+        active_demands=active_demands,
+        assigned_demands=assigned_demands,
+        fulfilled_demands=fulfilled_demands,
+        active_promotions=active_promotions,
+        total_credit_transactions=total_credit_transactions
+    )
 
 
 # ============================================================================
@@ -269,7 +266,7 @@ async def get_platform_stats(db: AsyncSession) -> dict:
 async def get_all_users(
     db: AsyncSession,
     role_filter: Optional[str] = None
-) -> List[dict]:
+) -> List[UserListItem]:
     """
     Get all users with optional role filter.
 
@@ -278,18 +275,12 @@ async def get_all_users(
         role_filter: Optional role filter ("buyer" | "agent" | "admin")
 
     Returns:
-        List of user dicts with profile info
-
-    Example:
-        >>> users = await get_all_users(db, role_filter="agent")
-        >>> for user in users:
-        ...     print(f"{user['name']} - {user['verification_status']}")
+        List of UserListItem models
     """
     query = (
         select(User)
         .options(
             selectinload(User.agent_profile),
-            # # selectinload(User.buyer_profile) # Removed # Removed
         )
     )
 
@@ -301,30 +292,15 @@ async def get_all_users(
     result = await db.execute(query)
     users = result.scalars().all()
 
-    # Transform to dict
     users_list = []
     for user in users:
-        user_dict = {
-            "id": str(user.id),
-            "name": user.name,
-            "email": user.email,
-            "role": user.role,
-            "email_verified": user.email_verified,
-            "created_at": user.created_at,
-            "verification_status": None,
-            "agency_name": None,
-            "credit_balance": None
-        }
-
-        # Add agent-specific fields
+        item = UserListItem.model_validate(user)
         if user.agent_profile:
-            user_dict["verification_status"] = user.agent_profile.verification_status
-            user_dict["credit_balance"] = user.agent_profile.credit_balance
-
-        # company_name is now in User table (for both buyers and agents)
-        user_dict["company_name"] = user.company_name
-
-        users_list.append(user_dict)
+            item = item.model_copy(update={
+                "verification_status": user.agent_profile.verification_status,
+                "credit_balance": user.agent_profile.credit_balance,
+            })
+        users_list.append(item)
 
     logger.info(f"Fetched {len(users_list)} users (role filter: {role_filter})")
     return users_list
@@ -339,7 +315,7 @@ async def admin_create_agent(
     name: str,
     email: str,
     password: str,
-    agency_name: str,
+    company_name: str,
     license_number: str,
     phone: str,
     whatsapp: Optional[str],
@@ -353,7 +329,7 @@ async def admin_create_agent(
     Args:
         db: Database session
         name, email, password: User fields
-        agency_name, license_number, etc: Agent profile fields
+        company_name, license_number, etc: Agent profile fields
         email_verified: Admin can bypass email verification
         verification_status: Admin can pre-approve
 
@@ -385,7 +361,7 @@ async def admin_create_agent(
         role="agent",
         email_verified=email_verified,
         # Common fields (now on User, not AgentProfile)
-        company_name=agency_name,
+        company_name=company_name,
         phone_number=phone
     )
     db.add(user)
@@ -398,7 +374,7 @@ async def admin_create_agent(
         whatsapp_number=whatsapp,
         bio_en=bio_en,
         verification_status=verification_status,
-        verified_at=datetime.now(datetime.now().astimezone().tzinfo) if verification_status == "approved" else None
+        verified_at=datetime.now(timezone.utc) if verification_status == "approved" else None
     )
     db.add(agent_profile)
 
@@ -460,9 +436,6 @@ async def admin_create_buyer(
     )
     db.add(user)
     await db.flush()
-
-    # BuyerProfile removed - company_name is already set in User table above
-    # No separate profile creation needed
 
     await db.commit()
     await db.refresh(user)

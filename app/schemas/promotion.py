@@ -19,15 +19,10 @@ class CreditPackageResponse(BaseSchema):
     name: str
     credits: int
     price_eur: float
-    price_lek: float
     is_popular: bool
     savings: Optional[str] = None
     is_active: bool
     sort_order: int
-
-    model_config = {
-        "from_attributes": True
-    }
 
 
 class CreditPackagesResponse(BaseSchema):
@@ -54,10 +49,6 @@ class PromotionTierConfigResponse(BaseSchema):
     badge_color: Optional[str] = None
     is_active: bool
 
-    model_config = {
-        "from_attributes": True
-    }
-
 
 class PromotionTierConfigsResponse(BaseSchema):
     """Response schema for promotion tier configs list."""
@@ -83,10 +74,6 @@ class CreditTransactionResponse(BaseSchema):
     promotion_id: Optional[str] = None
     payment_reference: Optional[str] = None
     created_at: datetime
-
-    model_config = {
-        "from_attributes": True
-    }
 
 
 class AgentCreditsResponse(BaseSchema):
@@ -116,10 +103,6 @@ class PromotionHistoryResponse(BaseSchema):
     views_during_promotion: int
     leads_during_promotion: int
     created_at: datetime
-
-    model_config = {
-        "from_attributes": True
-    }
 
 
 class AgentActivePromotionsResponse(BaseSchema):
@@ -232,3 +215,15 @@ class AdminCreditAdjustmentResponse(BaseSchema):
     amount_adjusted: int
     new_balance: int
     transaction: CreditTransactionResponse
+
+
+# ============================================================================
+# CRON JOB RESPONSES
+# ============================================================================
+
+class ExpirePromotionsResponse(BaseSchema):
+    """Response schema for scheduled promotion expiration job."""
+
+    success: bool = True
+    expired_count: int
+    message: str

@@ -69,9 +69,6 @@ services:
       # Cron
       CRON_SECRET: ${CRON_SECRET}
 
-      # Currency
-      EUR_TO_LEK_RATE: ${EUR_TO_LEK_RATE:-100.0}
-
     # No dependency on local db - we use DigitalOcean PostgreSQL
     # depends_on:
     #   db:

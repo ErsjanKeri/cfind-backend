@@ -27,11 +27,9 @@ class DemandCreate(BaseModel):
     - Demand type (investor or seeking_funding)
     """
 
-    # Budget (dual currency, both required)
+    # Budget (EUR only)
     budget_min_eur: Decimal = Field(..., gt=0, description="Minimum budget in EUR")
     budget_max_eur: Decimal = Field(..., gt=0, description="Maximum budget in EUR")
-    budget_min_lek: Decimal = Field(..., gt=0, description="Minimum budget in LEK")
-    budget_max_lek: Decimal = Field(..., gt=0, description="Maximum budget in LEK")
 
     # Category (same as Listing.category)
     category: str = Field(..., min_length=2, max_length=50)
@@ -49,16 +47,8 @@ class DemandCreate(BaseModel):
     @field_validator("budget_max_eur")
     @classmethod
     def validate_max_eur_greater_than_min(cls, v: Decimal, info) -> Decimal:
-        """Validate max budget >= min budget (EUR)."""
+        """Validate max budget >= min budget."""
         if "budget_min_eur" in info.data and v < info.data["budget_min_eur"]:
-            raise ValueError("Maximum budget must be greater than or equal to minimum budget")
-        return v
-
-    @field_validator("budget_max_lek")
-    @classmethod
-    def validate_max_lek_greater_than_min(cls, v: Decimal, info) -> Decimal:
-        """Validate max budget >= min budget (LEK)."""
-        if "budget_min_lek" in info.data and v < info.data["budget_min_lek"]:
             raise ValueError("Maximum budget must be greater than or equal to minimum budget")
         return v
 
@@ -67,8 +57,6 @@ class DemandCreate(BaseModel):
             "example": {
                 "budget_min_eur": 100000,
                 "budget_max_eur": 250000,
-                "budget_min_lek": 10000000,
-                "budget_max_lek": 25000000,
                 "category": "restaurant",
                 "preferred_city_en": "Tirana",
                 "preferred_area": "Blloku",
@@ -88,8 +76,6 @@ class DemandUpdate(BaseModel):
 
     budget_min_eur: Optional[Decimal] = Field(None, gt=0)
     budget_max_eur: Optional[Decimal] = Field(None, gt=0)
-    budget_min_lek: Optional[Decimal] = Field(None, gt=0)
-    budget_max_lek: Optional[Decimal] = Field(None, gt=0)
 
     category: Optional[str] = Field(None, min_length=2, max_length=50)
     preferred_city_en: Optional[str] = Field(None, min_length=2, max_length=100)
@@ -128,8 +114,6 @@ class DemandResponse(BaseSchema):
     # Budget
     budget_min_eur: float
     budget_max_eur: float
-    budget_min_lek: float
-    budget_max_lek: float
 
     # Category & Location
     category: str
@@ -154,10 +138,6 @@ class DemandResponse(BaseSchema):
     # Timestamps
     created_at: datetime
     updated_at: datetime
-
-    model_config = {
-        "from_attributes": True
-    }
 
 
 # ============================================================================

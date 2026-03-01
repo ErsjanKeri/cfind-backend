@@ -39,12 +39,10 @@ class BuyerDemand(Base):
     buyer_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
 
     # ========================================================================
-    # BUDGET (dual currency: EUR and LEK)
+    # BUDGET (EUR only)
     # ========================================================================
     budget_min_eur = Column(Numeric(precision=12, scale=2), nullable=False)
     budget_max_eur = Column(Numeric(precision=12, scale=2), nullable=False)
-    budget_min_lek = Column(Numeric(precision=15, scale=2), nullable=False)
-    budget_max_lek = Column(Numeric(precision=15, scale=2), nullable=False)
 
     # ========================================================================
     # CATEGORY & LOCATION

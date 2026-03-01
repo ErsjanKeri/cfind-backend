@@ -1,6 +1,6 @@
 """Pydantic schemas for listing operations."""
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 from decimal import Decimal
@@ -12,17 +12,13 @@ from app.schemas.base import BaseSchema
 # LISTING IMAGE
 # ============================================================================
 
-class ListingImageSchema(BaseModel):
+class ListingImageSchema(BaseSchema):
     """Listing image schema."""
 
     id: str
     url: str
     order: int
     created_at: datetime
-
-    model_config = {
-        "from_attributes": True
-    }
 
 
 class ListingImageCreate(BaseModel):
@@ -70,12 +66,10 @@ class ListingCreate(BaseModel):
     public_location_area: Optional[str] = Field(None, max_length=100)
 
     # ========================================================================
-    # FINANCIALS (dual currency)
+    # FINANCIALS (EUR only)
     # ========================================================================
     asking_price_eur: Decimal = Field(..., gt=0)
-    asking_price_lek: Decimal = Field(..., gt=0)
     monthly_revenue_eur: Optional[Decimal] = Field(None, ge=0)
-    monthly_revenue_lek: Optional[Decimal] = Field(None, ge=0)
 
     # ========================================================================
     # BUSINESS DETAILS
@@ -107,9 +101,7 @@ class ListingCreate(BaseModel):
                 "public_location_city_en": "Tirana",
                 "public_location_area": "City Center",
                 "asking_price_eur": 150000,
-                "asking_price_lek": 15000000,
                 "monthly_revenue_eur": 8000,
-                "monthly_revenue_lek": 800000,
                 "employee_count": 8,
                 "years_in_operation": 5,
                 "images": [
@@ -148,9 +140,7 @@ class ListingUpdate(BaseModel):
 
     # Financials
     asking_price_eur: Optional[Decimal] = Field(None, gt=0)
-    asking_price_lek: Optional[Decimal] = Field(None, gt=0)
     monthly_revenue_eur: Optional[Decimal] = Field(None, ge=0)
-    monthly_revenue_lek: Optional[Decimal] = Field(None, ge=0)
 
     # Business details
     employee_count: Optional[int] = Field(None, ge=0)
@@ -167,25 +157,11 @@ class ListingUpdate(BaseModel):
 
 
 # ============================================================================
-# LISTING RESPONSE (PUBLIC)
+# LISTING RESPONSE (SHARED BASE)
 # ============================================================================
 
-class ListingPublic(BaseModel):
-    """
-    Public listing response - hides sensitive information.
-
-    Hidden fields:
-    - real_business_name
-    - real_location_address (exact address)
-    - real_location_lat, real_location_lng (coordinates)
-    - real_description_en
-
-    Shown fields:
-    - Public title, description
-    - Approximate location (city, area only)
-    - Financials (asking price, revenue, ROI)
-    - Images, basic stats
-    """
+class _ListingBase(BaseSchema):
+    """Shared fields for public and private listing responses."""
 
     id: str
     agent_id: str
@@ -196,91 +172,16 @@ class ListingPublic(BaseModel):
     promotion_start_date: Optional[datetime] = None
     promotion_end_date: Optional[datetime] = None
 
-    # Public information (sanitized)
+    # Public information
     public_title_en: str
     public_description_en: str
     category: str
     public_location_city_en: str
     public_location_area: Optional[str] = None
-
-    # Financials (shown to help buyers assess)
-    asking_price_eur: float
-    asking_price_lek: float
-    monthly_revenue_eur: Optional[float] = None
-    monthly_revenue_lek: Optional[float] = None
-    roi: Optional[float] = None
-
-    # Business details
-    employee_count: Optional[int] = None
-    years_in_operation: Optional[int] = None
-    is_physically_verified: bool
-
-    # Images
-    images: List[ListingImageSchema]
-
-    # Metadata
-    view_count: int
-    created_at: datetime
-    updated_at: datetime
-
-    # Agent info (name and contact - shown immediately)
-    agent_name: Optional[str] = None
-    agent_agency_name: Optional[str] = None
-    agent_phone: Optional[str] = None
-    agent_whatsapp: Optional[str] = None
-    agent_email: Optional[str] = None
-
-    model_config = {
-        "from_attributes": True
-    }
-
-
-# ============================================================================
-# LISTING RESPONSE (PRIVATE)
-# ============================================================================
-
-class ListingPrivate(BaseModel):
-    """
-    Private listing response - shows ALL information.
-
-    Visible to:
-    - Listing owner (agent)
-    - Admin
-
-    Shows everything including:
-    - Real business name
-    - Exact address and coordinates
-    - Private description
-    """
-
-    id: str
-    agent_id: str
-    status: str
-
-    # Promotion
-    promotion_tier: str
-    promotion_start_date: Optional[datetime] = None
-    promotion_end_date: Optional[datetime] = None
-
-    # PUBLIC information
-    public_title_en: str
-    public_description_en: str
-    category: str
-    public_location_city_en: str
-    public_location_area: Optional[str] = None
-
-    # PRIVATE information (full business details)
-    real_business_name: Optional[str] = None
-    real_location_address: Optional[str] = None
-    real_location_lat: Optional[float] = None
-    real_location_lng: Optional[float] = None
-    real_description_en: Optional[str] = None
 
     # Financials
     asking_price_eur: float
-    asking_price_lek: float
     monthly_revenue_eur: Optional[float] = None
-    monthly_revenue_lek: Optional[float] = None
     roi: Optional[float] = None
 
     # Business details
@@ -303,9 +204,28 @@ class ListingPrivate(BaseModel):
     agent_whatsapp: Optional[str] = None
     agent_email: Optional[str] = None
 
-    model_config = {
-        "from_attributes": True
-    }
+
+# ============================================================================
+# LISTING RESPONSE (PUBLIC)
+# ============================================================================
+
+class ListingPublic(_ListingBase):
+    """Public listing response — hides real business name, address, and coordinates."""
+    pass
+
+
+# ============================================================================
+# LISTING RESPONSE (PRIVATE)
+# ============================================================================
+
+class ListingPrivate(_ListingBase):
+    """Private listing response — includes real business details. Visible to owner/admin."""
+
+    real_business_name: Optional[str] = None
+    real_location_address: Optional[str] = None
+    real_location_lat: Optional[float] = None
+    real_location_lng: Optional[float] = None
+    real_description_en: Optional[str] = None
 
 
 # ============================================================================
@@ -323,10 +243,6 @@ class ListingSearchParams(BaseModel):
     # Price range (EUR)
     min_price_eur: Optional[Decimal] = Field(None, ge=0)
     max_price_eur: Optional[Decimal] = Field(None, ge=0)
-
-    # Price range (LEK)
-    min_price_lek: Optional[Decimal] = Field(None, ge=0)
-    max_price_lek: Optional[Decimal] = Field(None, ge=0)
 
     # ROI range
     min_roi: Optional[Decimal] = Field(None, ge=0)

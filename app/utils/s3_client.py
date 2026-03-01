@@ -15,7 +15,7 @@ Supports both:
 import logging
 import uuid
 from typing import Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 import boto3
 from botocore.client import Config
 from botocore.exceptions import ClientError
@@ -351,7 +351,7 @@ def generate_unique_key(
         'images/20240115_abc123def_profile.jpg'
     """
     # Generate timestamp
-    timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
 
     # Generate short UUID
     unique_id = str(uuid.uuid4())[:8]
@@ -392,7 +392,7 @@ def generate_document_key(
     ext = filename.rsplit('.', 1)[1] if '.' in filename else 'pdf'
 
     # Generate timestamp and short UUID
-    timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
     unique_id = str(uuid.uuid4())[:8]
 
     return f"documents/agents/{user_id}/{document_type}_{timestamp}_{unique_id}.{ext}"

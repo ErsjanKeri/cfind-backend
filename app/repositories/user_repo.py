@@ -10,14 +10,17 @@ Handles:
 
 import logging
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 from fastapi import HTTPException, status
 
-from app.models.user import User, AgentProfile  # BuyerProfile removed
-from app.schemas.user import UserProfileUpdate, AgentProfileUpdate  # BuyerProfileUpdate removed
+from app.models.user import User, AgentProfile
+from app.schemas.user import (
+    UserProfileUpdate, AgentProfileUpdate,
+    AgentVerificationStatus, DocumentsCompletionStatus,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +55,6 @@ async def get_user_by_id(
     if include_profiles:
         query = query.options(
             selectinload(User.agent_profile),
-            # # selectinload(User.buyer_profile) # Removed # Removed
         )
 
     result = await db.execute(query)
@@ -80,7 +82,6 @@ async def get_user_by_email(
     if include_profiles:
         query = query.options(
             selectinload(User.agent_profile),
-            # # selectinload(User.buyer_profile) # Removed # Removed
         )
 
     result = await db.execute(query)
@@ -149,7 +150,7 @@ async def update_user_basic_info(
     if update_data.website is not None:
         user.website = update_data.website
 
-    user.updated_at = datetime.utcnow()
+    user.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
     await db.refresh(user)
@@ -204,52 +205,22 @@ async def update_agent_profile(
             detail="Agent profile not found"
         )
 
-    # Track if re-verification is needed
+    # Apply updates and detect re-verification triggers
+    re_verify_fields = {"license_number", "license_document_url", "company_document_url", "id_document_url"}
     re_verification_triggered = False
 
-    # Check critical field changes (trigger re-verification)
-    if update_data.license_number is not None and update_data.license_number != agent_profile.license_number:
-        logger.info(f"Agent {user_id} changed license number - triggering re-verification")
-        re_verification_triggered = True
-
-    # Check document uploads (trigger re-verification if any new document)
-    if update_data.license_document_url and update_data.license_document_url != agent_profile.license_document_url:
-        logger.info(f"Agent {user_id} uploaded new license document - triggering re-verification")
-        re_verification_triggered = True
-
-    if update_data.company_document_url and update_data.company_document_url != agent_profile.company_document_url:
-        logger.info(f"Agent {user_id} uploaded new company document - triggering re-verification")
-        re_verification_triggered = True
-
-    if update_data.id_document_url and update_data.id_document_url != agent_profile.id_document_url:
-        logger.info(f"Agent {user_id} uploaded new ID document - triggering re-verification")
-        re_verification_triggered = True
-
-    # Apply updates
-    # Note: agency_name and phone_number removed - those are now on User model
-    if update_data.license_number is not None:
-        agent_profile.license_number = update_data.license_number
-
-    if update_data.whatsapp_number is not None:
-        agent_profile.whatsapp_number = update_data.whatsapp_number
-
-    if update_data.bio_en is not None:
-        agent_profile.bio_en = update_data.bio_en
-
-    # Update documents
-    if update_data.license_document_url is not None:
-        agent_profile.license_document_url = update_data.license_document_url
-
-    if update_data.company_document_url is not None:
-        agent_profile.company_document_url = update_data.company_document_url
-
-    if update_data.id_document_url is not None:
-        agent_profile.id_document_url = update_data.id_document_url
+    for field, value in update_data.model_dump(exclude_unset=True).items():
+        if value is None:
+            continue
+        if field in re_verify_fields and value != getattr(agent_profile, field):
+            logger.info(f"Agent {user_id} changed {field} - triggering re-verification")
+            re_verification_triggered = True
+        setattr(agent_profile, field, value)
 
     # Trigger re-verification if needed
     if re_verification_triggered:
         agent_profile.verification_status = "pending"
-        agent_profile.submitted_at = datetime.utcnow()
+        agent_profile.submitted_at = datetime.now(timezone.utc)
         # Clear previous rejection data
         agent_profile.rejection_reason = None
         agent_profile.rejected_at = None
@@ -314,42 +285,22 @@ async def check_agent_documents_complete(
 
 
 # ============================================================================
-# BUYER PROFILE UPDATES
-# ============================================================================
-
-# BuyerProfile functions REMOVED - buyer fields now in User table
-# Use update_user_basic_info() to update company_name instead
-
-# BUYER PROFILE UPDATE FUNCTION REMOVED
-# Buyer fields (company_name) are now in User table
-# Use update_user_basic_info() instead
-
-
-# ============================================================================
 # AGENT VERIFICATION HELPERS
 # ============================================================================
 
 async def get_agent_verification_status(
     db: AsyncSession,
     user_id: str
-) -> dict:
+) -> AgentVerificationStatus:
     """
     Get comprehensive agent verification status.
-
-    Returns verification status, documents status, and pending issues.
 
     Args:
         db: Database session
         user_id: User UUID
 
     Returns:
-        Dict with verification details
-
-    Example:
-        >>> status = await get_agent_verification_status(db, user_id)
-        >>> print(status['verification_status'])  # "pending" | "approved" | "rejected"
-        >>> print(status['documents_complete'])   # True/False
-        >>> print(status['can_create_listings'])  # True/False
+        AgentVerificationStatus model
     """
     # Fetch agent profile
     result = await db.execute(
@@ -372,14 +323,14 @@ async def get_agent_verification_status(
         documents_complete
     )
 
-    return {
-        "verification_status": agent_profile.verification_status,
-        "verified_at": agent_profile.verified_at,
-        "submitted_at": agent_profile.submitted_at,
-        "documents_complete": documents_complete,
-        "documents_status": documents_status,
-        "can_create_listings": can_create_listings,
-        "rejection_reason": agent_profile.rejection_reason,
-        "rejected_at": agent_profile.rejected_at,
-        "rejected_by": agent_profile.rejected_by
-    }
+    return AgentVerificationStatus(
+        verification_status=agent_profile.verification_status,
+        verified_at=agent_profile.verified_at,
+        submitted_at=agent_profile.submitted_at,
+        documents_complete=documents_complete,
+        documents_status=DocumentsCompletionStatus(**documents_status),
+        can_create_listings=can_create_listings,
+        rejection_reason=agent_profile.rejection_reason,
+        rejected_at=agent_profile.rejected_at,
+        rejected_by=str(agent_profile.rejected_by) if agent_profile.rejected_by else None
+    )

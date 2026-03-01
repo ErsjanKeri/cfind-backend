@@ -9,7 +9,7 @@ Includes:
 """
 
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Any
 from jose import jwt, JWTError
 from argon2 import PasswordHasher
@@ -30,6 +30,22 @@ ph = PasswordHasher(
     salt_len=16,          # Salt length
     encoding='utf-8',
 )
+
+
+def validate_password_strength(password: str) -> str:
+    """
+    Validate password meets strength requirements. Raises ValueError if not.
+    Returns the password if valid (for use as Pydantic field_validator).
+    """
+    if len(password) < 8:
+        raise ValueError("Password must be at least 8 characters")
+    if not any(c.isupper() for c in password):
+        raise ValueError("Password must contain at least one uppercase letter")
+    if not any(c.islower() for c in password):
+        raise ValueError("Password must contain at least one lowercase letter")
+    if not any(c.isdigit() for c in password):
+        raise ValueError("Password must contain at least one number")
+    return password
 
 
 def hash_password(password: str) -> str:
@@ -125,12 +141,12 @@ def create_access_token(
     if expires_delta is None:
         expires_delta = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
-    expire = datetime.utcnow() + expires_delta
+    expire = datetime.now(timezone.utc) + expires_delta
 
     to_encode = {
         "sub": subject,
         "exp": expire,
-        "iat": datetime.utcnow(),
+        "iat": datetime.now(timezone.utc),
         "jti": secrets.token_urlsafe(16),  # Unique token ID
     }
 
@@ -177,7 +193,7 @@ def create_refresh_token(
     if expires_delta is None:
         expires_delta = timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
 
-    expire = datetime.utcnow() + expires_delta
+    expire = datetime.now(timezone.utc) + expires_delta
     jti = secrets.token_urlsafe(32)  # Unique token ID (stored in DB)
 
     to_encode = {
@@ -185,7 +201,7 @@ def create_refresh_token(
         "jti": jti,
         "session_id": session_id,
         "exp": expire,
-        "iat": datetime.utcnow(),
+        "iat": datetime.now(timezone.utc),
     }
 
     encoded_jwt = jwt.encode(
@@ -272,7 +288,7 @@ def generate_secure_token() -> str:
         >>> verification_token = EmailVerificationToken(
         ...     user_id=user.id,
         ...     token=token,
-        ...     expires=datetime.utcnow() + timedelta(hours=24)
+        ...     expires=datetime.now(timezone.utc) + timedelta(hours=24)
         ... )
     """
     return secrets.token_urlsafe(32)

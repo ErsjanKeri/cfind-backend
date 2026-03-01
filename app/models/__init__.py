@@ -9,7 +9,7 @@ from app.db.base import Base
 
 # Import models in dependency order (least dependent first)
 from app.models.token import EmailVerificationToken, PasswordResetToken, RefreshToken
-from app.models.user import User, AgentProfile  # BuyerProfile removed
+from app.models.user import User, AgentProfile
 from app.models.listing import Listing, ListingImage
 from app.models.lead import Lead, SavedListing
 from app.models.demand import BuyerDemand
@@ -25,7 +25,6 @@ __all__ = [
     # User models
     "User",
     "AgentProfile",
-    # "BuyerProfile", # Removed - buyer fields in User table
     # Listing models
     "Listing",
     "ListingImage",

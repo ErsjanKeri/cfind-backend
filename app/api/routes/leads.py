@@ -9,9 +9,8 @@ Endpoints:
 - GET /saved - Get all saved listings for current buyer
 """
 
-from typing import Annotated, List
-from fastapi import APIRouter, Depends, status
-from pydantic import BaseModel, Field
+from typing import Annotated
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -19,84 +18,23 @@ from app.models.user import User
 from app.api.deps import (
     get_verified_user,
     verify_csrf_token,
-    RoleChecker
+    RoleChecker,
+    ensure_owner_or_admin
 )
-from app.services import lead_service
+from app.schemas.lead import (
+    CreateLeadRequest,
+    LeadCreateDetail, LeadCreateResponse,
+    AgentLeadsResponse,
+    BuyerLeadsResponse,
+    SavedListingToggleResponse,
+    SavedListingsResponse,
+)
+from app.repositories import lead_repo
+from app.repositories.listing_repo import get_listing_by_id
+from app.core.exceptions import LeadAlreadyExistsException
 
 # Initialize router
 router = APIRouter(prefix="/leads", tags=["Leads"])
-
-
-# ============================================================================
-# PYDANTIC SCHEMAS
-# ============================================================================
-
-class LeadCreate(BaseModel):
-    """Request schema for creating lead."""
-
-    listing_id: str = Field(..., min_length=36, max_length=36)
-    interaction_type: str = Field(..., pattern="^(whatsapp|phone|email)$")
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "listing_id": "123e4567-e89b-12d3-a456-426614174000",
-                "interaction_type": "whatsapp"
-            }
-        }
-    }
-
-
-class LeadResponse(BaseModel):
-    """Response schema for lead."""
-
-    id: str
-    listing_id: str
-    listing_title: str
-    agent_id: str
-    agent_name: str
-    interaction_type: str
-    created_at: str
-
-
-class LeadCreateResponse(BaseModel):
-    """Response schema for lead creation."""
-
-    success: bool = True
-    message: str = "Lead created successfully. Agent contact information is visible on the listing."
-    lead: dict
-
-
-class AgentLeadsResponse(BaseModel):
-    """Response schema for agent's leads."""
-
-    success: bool = True
-    total: int
-    leads: List[dict]
-
-
-class BuyerLeadsResponse(BaseModel):
-    """Response schema for buyer's leads."""
-
-    success: bool = True
-    total: int
-    leads: List[dict]
-
-
-class SavedListingToggleResponse(BaseModel):
-    """Response schema for toggling saved listing."""
-
-    success: bool = True
-    message: str
-    is_saved: bool
-
-
-class SavedListingsResponse(BaseModel):
-    """Response schema for saved listings."""
-
-    success: bool = True
-    total: int
-    listings: List[dict]
 
 
 # ============================================================================
@@ -111,7 +49,7 @@ class SavedListingsResponse(BaseModel):
     description="Track buyer-agent interaction (buyer contacts agent via listing)"
 )
 async def create_lead(
-    lead_data: LeadCreate,
+    lead_data: CreateLeadRequest,
     current_user: Annotated[User, Depends(get_verified_user)],
     _: None = Depends(verify_csrf_token),
     db: AsyncSession = Depends(get_db)
@@ -132,17 +70,33 @@ async def create_lead(
     Agent contact information (phone, WhatsApp, email) is visible
     immediately on listing cards. Lead creation is just for tracking.
     """
-    lead_dict = await lead_service.create_lead_service(
-        db,
-        str(current_user.id),
-        lead_data.listing_id,
-        lead_data.interaction_type
-    )
+    # Validate listing exists and is active
+    result = await get_listing_by_id(db, lead_data.listing_id, mode="public")
+    if not result:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found")
+
+    listing, agent = result
+    if listing.status != "active":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot contact agent for inactive listing")
+
+    # Check deduplication
+    buyer_id = str(current_user.id)
+    exists = await lead_repo.check_lead_exists(db, buyer_id, lead_data.listing_id, lead_data.interaction_type)
+    if exists:
+        raise LeadAlreadyExistsException()
+
+    # Create lead
+    lead = await lead_repo.create_lead(db, buyer_id, lead_data.listing_id, str(listing.agent_id), lead_data.interaction_type)
 
     return LeadCreateResponse(
         success=True,
         message="Lead created successfully. Agent contact information is visible on the listing.",
-        lead=lead_dict
+        lead=LeadCreateDetail(
+            id=lead.id, listing_id=lead.listing_id,
+            listing_title=listing.public_title_en,
+            agent_id=lead.agent_id, agent_name=agent.name,
+            interaction_type=lead.interaction_type, created_at=lead.created_at,
+        )
     )
 
 
@@ -179,11 +133,9 @@ async def get_agent_leads(
     - Track buyer engagement
     - Follow up with potential buyers
     """
-    leads = await lead_service.get_agent_leads_service(
-        db,
-        agent_id,
-        current_user
-    )
+    ensure_owner_or_admin(agent_id, current_user, "You are not authorized to view these leads")
+
+    leads = await lead_repo.get_agent_leads(db, agent_id)
 
     return AgentLeadsResponse(
         success=True,
@@ -225,11 +177,9 @@ async def get_buyer_leads(
     - Review contact history
     - Follow up on inquiries
     """
-    leads = await lead_service.get_buyer_leads_service(
-        db,
-        buyer_id,
-        current_user
-    )
+    ensure_owner_or_admin(buyer_id, current_user, "You are not authorized to view these leads")
+
+    leads = await lead_repo.get_buyer_leads(db, buyer_id)
 
     return BuyerLeadsResponse(
         success=True,
@@ -266,11 +216,12 @@ async def toggle_saved_listing(
     - is_saved: Current save status after toggle
     - message: Action performed
     """
-    is_saved, message = await lead_service.toggle_saved_listing_service(
-        db,
-        str(current_user.id),
-        listing_id
-    )
+    # Verify listing exists
+    result = await get_listing_by_id(db, listing_id, mode="public")
+    if not result:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found")
+
+    is_saved, message = await lead_repo.toggle_saved_listing(db, str(current_user.id), listing_id)
 
     return SavedListingToggleResponse(
         success=True,
@@ -301,7 +252,7 @@ async def get_saved_listings(
     If a listing becomes invisible (agent loses verification, status changes),
     it's soft-deleted from saved listings (won't appear in results).
     """
-    saved_listings = await lead_service.get_saved_listings_service(
+    saved_listings = await lead_repo.get_saved_listings(
         db,
         str(current_user.id)
     )

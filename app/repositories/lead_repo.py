@@ -10,16 +10,16 @@ Handles:
 
 import logging
 from typing import List, Optional
-from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, and_
-from sqlalchemy.orm import selectinload, joinedload
+from sqlalchemy import select, and_
+from sqlalchemy.orm import selectinload
 from fastapi import HTTPException, status
 import uuid
 
 from app.models.lead import Lead, SavedListing
 from app.models.listing import Listing
 from app.models.user import User, AgentProfile
+from app.schemas.lead import AgentLead, BuyerLead, SavedListingItem
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +122,7 @@ async def create_lead(
 async def get_agent_leads(
     db: AsyncSession,
     agent_id: str
-) -> List[dict]:
+) -> List[AgentLead]:
     """
     Get all leads for an agent (all buyers who contacted their listings).
 
@@ -158,21 +158,18 @@ async def get_agent_leads(
 
     leads = result.scalars().all()
 
-    # Transform to dict
-    leads_list = []
-    for lead in leads:
-        leads_list.append({
-            "id": str(lead.id),
-            "listing_id": str(lead.listing_id),
-            "listing_title": lead.listing.public_title_en,
-            "listing_asking_price_eur": float(lead.listing.asking_price_eur),
-            "buyer_id": str(lead.buyer_id),
-            "buyer_name": lead.buyer.name,
-            "buyer_email": lead.buyer.email,
-            "buyer_company": lead.buyer.company_name if lead.buyer else None,  # buyer_profile removed
-            "interaction_type": lead.interaction_type,
-            "created_at": lead.created_at
-        })
+    leads_list = [
+        AgentLead(
+            id=lead.id, listing_id=lead.listing_id,
+            listing_title=lead.listing.public_title_en,
+            listing_asking_price_eur=lead.listing.asking_price_eur,
+            buyer_id=lead.buyer_id,
+            buyer_name=lead.buyer.name, buyer_email=lead.buyer.email,
+            buyer_company=lead.buyer.company_name if lead.buyer else None,
+            interaction_type=lead.interaction_type, created_at=lead.created_at,
+        )
+        for lead in leads
+    ]
 
     logger.info(f"Fetched {len(leads_list)} leads for agent {agent_id}")
     return leads_list
@@ -185,7 +182,7 @@ async def get_agent_leads(
 async def get_buyer_leads(
     db: AsyncSession,
     buyer_id: str
-) -> List[dict]:
+) -> List[BuyerLead]:
     """
     Get all leads for a buyer (all agents buyer contacted).
 
@@ -221,24 +218,21 @@ async def get_buyer_leads(
 
     leads = result.scalars().all()
 
-    # Transform to dict
-    leads_list = []
-    for lead in leads:
-        agent_profile = lead.agent.agent_profile
-        leads_list.append({
-            "id": str(lead.id),
-            "listing_id": str(lead.listing_id),
-            "listing_title": lead.listing.public_title_en,
-            "listing_asking_price_eur": float(lead.listing.asking_price_eur),
-            "agent_id": str(lead.agent_id),
-            "agent_name": lead.agent.name,
-            "agent_agency": lead.agent.company_name,  # agency_name removed, use User.company_name
-            "agent_email": lead.agent.email,
-            "agent_phone": lead.agent.phone_number,  # phone_number removed, use User.phone_number
-            "agent_whatsapp": agent_profile.whatsapp_number if agent_profile else None,
-            "interaction_type": lead.interaction_type,
-            "created_at": lead.created_at
-        })
+    leads_list = [
+        BuyerLead(
+            id=lead.id, listing_id=lead.listing_id,
+            listing_title=lead.listing.public_title_en,
+            listing_asking_price_eur=lead.listing.asking_price_eur,
+            agent_id=lead.agent_id,
+            agent_name=lead.agent.name,
+            agent_agency=lead.agent.company_name,
+            agent_email=lead.agent.email,
+            agent_phone=lead.agent.phone_number,
+            agent_whatsapp=lead.agent.agent_profile.whatsapp_number if lead.agent.agent_profile else None,
+            interaction_type=lead.interaction_type, created_at=lead.created_at,
+        )
+        for lead in leads
+    ]
 
     logger.info(f"Fetched {len(leads_list)} leads for buyer {buyer_id}")
     return leads_list
@@ -304,22 +298,18 @@ async def toggle_saved_listing(
 async def get_saved_listings(
     db: AsyncSession,
     buyer_id: str
-) -> List[dict]:
+) -> List[SavedListingItem]:
     """
     Get all saved listings for a buyer.
 
-    Returns listings with public view (same as search results).
+    Returns listings with public view (same as search results) plus saved_at timestamp.
 
     Args:
         db: Database session
         buyer_id: Buyer UUID
 
     Returns:
-        List of saved listing dicts
-
-    Example:
-        >>> saved = await get_saved_listings(db, buyer_id="123...")
-        >>> print(f"Buyer has {len(saved)} saved listings")
+        List of SavedListingItem models
     """
     result = await db.execute(
         select(SavedListing, Listing, User)
@@ -338,12 +328,15 @@ async def get_saved_listings(
     # Import transform function
     from app.repositories.listing_repo import transform_public_listing
 
-    # Transform to public view
+    # Transform to public view + add saved_at
     listings_list = []
     for saved_listing, listing, agent in rows:
-        listing_dict = transform_public_listing(listing, agent)
-        listing_dict['saved_at'] = saved_listing.created_at
-        listings_list.append(listing_dict)
+        public = transform_public_listing(listing, agent)
+        saved_item = SavedListingItem(
+            **public.model_dump(),
+            saved_at=saved_listing.created_at
+        )
+        listings_list.append(saved_item)
 
     logger.info(f"Fetched {len(listings_list)} saved listings for buyer {buyer_id}")
     return listings_list

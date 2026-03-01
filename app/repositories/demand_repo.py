@@ -11,18 +11,40 @@ Handles:
 
 import logging
 from typing import Optional, List, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, and_, or_, desc
+from sqlalchemy import select, update, delete, and_, desc
 from sqlalchemy.orm import selectinload
 from fastapi import HTTPException, status
 import uuid
 
 from app.models.demand import BuyerDemand
-from app.models.user import User, AgentProfile  # BuyerProfile removed
-from app.schemas.demand import DemandCreate, DemandUpdate, DemandSearchParams
+from app.models.user import User, AgentProfile
+from app.schemas.demand import DemandCreate, DemandUpdate, DemandSearchParams, DemandResponse
 
 logger = logging.getLogger(__name__)
+
+
+def _transform_demand(demand, buyer=None, assigned_agent=None, assigned_agent_profile=None) -> DemandResponse:
+    """Transform a demand ORM object to a typed DemandResponse."""
+    b = buyer or demand.buyer
+    agent = assigned_agent or getattr(demand, 'assigned_agent', None)
+    agent_prof = assigned_agent_profile or (agent.agent_profile if agent else None)
+
+    result = DemandResponse.model_validate(demand)
+    updates = {
+        "buyer_name": b.name,
+        "buyer_email": b.email,
+        "buyer_company": b.company_name,
+    }
+    if agent:
+        updates.update(
+            assigned_agent_name=agent.name,
+            assigned_agent_email=agent.email,
+            assigned_agent_phone=agent.phone_number,
+            assigned_agent_whatsapp=agent_prof.whatsapp_number if agent_prof else None,
+        )
+    return result.model_copy(update=updates)
 
 
 # ============================================================================
@@ -56,8 +78,6 @@ async def create_demand(
         buyer_id=buyer_id,
         budget_min_eur=demand_data.budget_min_eur,
         budget_max_eur=demand_data.budget_max_eur,
-        budget_min_lek=demand_data.budget_min_lek,
-        budget_max_lek=demand_data.budget_max_lek,
         category=demand_data.category,
         preferred_city_en=demand_data.preferred_city_en,
         preferred_area=demand_data.preferred_area,
@@ -81,7 +101,7 @@ async def create_demand(
 async def get_active_demands(
     db: AsyncSession,
     search_params: DemandSearchParams
-) -> Tuple[List[dict], int]:
+) -> Tuple[List[DemandResponse], int]:
     """
     Get active demands for agents to browse.
 
@@ -108,7 +128,6 @@ async def get_active_demands(
     query = (
         select(BuyerDemand, User)
         .join(User, BuyerDemand.buyer_id == User.id)
-        # BuyerProfile removed - buyer fields now in User table
         .options(
             selectinload(BuyerDemand.buyer)  # Just load buyer, no profile
         )
@@ -161,36 +180,8 @@ async def get_active_demands(
     result = await db.execute(query)
     rows = result.all()
 
-    # Transform to dict
-    demands_list = []
-    for demand, buyer in rows:
-        # buyer_profile removed - access buyer.company_name directly
-
-        demands_list.append({
-            "id": str(demand.id),
-            "buyer_id": str(demand.buyer_id),
-            "buyer_name": buyer.name,
-            "buyer_email": buyer.email,
-            "buyer_company": buyer.company_name,  # Now in User table
-            "budget_min_eur": float(demand.budget_min_eur),
-            "budget_max_eur": float(demand.budget_max_eur),
-            "budget_min_lek": float(demand.budget_min_lek),
-            "budget_max_lek": float(demand.budget_max_lek),
-            "category": demand.category,
-            "preferred_city_en": demand.preferred_city_en,
-            "preferred_area": demand.preferred_area,
-            "description": demand.description,
-            "status": demand.status,
-            "demand_type": demand.demand_type,
-            "assigned_agent_id": None,
-            "assigned_agent_name": None,
-            "assigned_agent_email": None,
-            "assigned_agent_phone": None,
-            "assigned_agent_whatsapp": None,
-            "assigned_at": None,
-            "created_at": demand.created_at,
-            "updated_at": demand.updated_at
-        })
+    # Transform to dict (active demands have no assigned agent)
+    demands_list = [_transform_demand(demand, buyer=buyer) for demand, buyer in rows]
 
     logger.info(f"Fetched {len(demands_list)} active demands (page {search_params.page}, total: {total})")
     return demands_list, total
@@ -203,7 +194,7 @@ async def get_active_demands(
 async def get_buyer_demands(
     db: AsyncSession,
     buyer_id: str
-) -> List[dict]:
+) -> List[DemandResponse]:
     """
     Get all demands for a buyer (all statuses).
 
@@ -233,37 +224,7 @@ async def get_buyer_demands(
 
     demands = result.scalars().all()
 
-    # Transform to dict
-    demands_list = []
-    for demand in demands:
-        assigned_agent = demand.assigned_agent
-        assigned_agent_profile = assigned_agent.agent_profile if assigned_agent else None
-
-        demands_list.append({
-            "id": str(demand.id),
-            "buyer_id": str(demand.buyer_id),
-            "buyer_name": demand.buyer.name,
-            "buyer_email": demand.buyer.email,
-            "buyer_company": demand.buyer.company_name,  # Now in User table
-            "budget_min_eur": float(demand.budget_min_eur),
-            "budget_max_eur": float(demand.budget_max_eur),
-            "budget_min_lek": float(demand.budget_min_lek),
-            "budget_max_lek": float(demand.budget_max_lek),
-            "category": demand.category,
-            "preferred_city_en": demand.preferred_city_en,
-            "preferred_area": demand.preferred_area,
-            "description": demand.description,
-            "status": demand.status,
-            "demand_type": demand.demand_type,
-            "assigned_agent_id": str(assigned_agent.id) if assigned_agent else None,
-            "assigned_agent_name": assigned_agent.name if assigned_agent else None,
-            "assigned_agent_email": assigned_agent.email if assigned_agent else None,
-            "assigned_agent_phone": assigned_agent.phone_number if assigned_agent else None,  # phone_number now on User
-            "assigned_agent_whatsapp": assigned_agent_profile.whatsapp_number if assigned_agent_profile else None,
-            "assigned_at": demand.assigned_at,
-            "created_at": demand.created_at,
-            "updated_at": demand.updated_at
-        })
+    demands_list = [_transform_demand(demand) for demand in demands]
 
     logger.info(f"Fetched {len(demands_list)} demands for buyer {buyer_id}")
     return demands_list
@@ -276,7 +237,7 @@ async def get_buyer_demands(
 async def get_agent_claimed_demands(
     db: AsyncSession,
     agent_id: str
-) -> List[dict]:
+) -> List[DemandResponse]:
     """
     Get all demands claimed by an agent.
 
@@ -305,36 +266,7 @@ async def get_agent_claimed_demands(
 
     demands = result.scalars().all()
 
-    # Transform to dict (same as get_buyer_demands)
-    demands_list = []
-    for demand in demands:
-        assigned_agent_profile = demand.assigned_agent.agent_profile
-
-        demands_list.append({
-            "id": str(demand.id),
-            "buyer_id": str(demand.buyer_id),
-            "buyer_name": demand.buyer.name,
-            "buyer_email": demand.buyer.email,
-            "buyer_company": demand.buyer.company_name,  # Now in User table
-            "budget_min_eur": float(demand.budget_min_eur),
-            "budget_max_eur": float(demand.budget_max_eur),
-            "budget_min_lek": float(demand.budget_min_lek),
-            "budget_max_lek": float(demand.budget_max_lek),
-            "category": demand.category,
-            "preferred_city_en": demand.preferred_city_en,
-            "preferred_area": demand.preferred_area,
-            "description": demand.description,
-            "status": demand.status,
-            "demand_type": demand.demand_type,
-            "assigned_agent_id": str(demand.assigned_agent.id),
-            "assigned_agent_name": demand.assigned_agent.name,
-            "assigned_agent_email": demand.assigned_agent.email,
-            "assigned_agent_phone": demand.assigned_agent.phone_number,  # phone_number now on User
-            "assigned_agent_whatsapp": assigned_agent_profile.whatsapp_number if assigned_agent_profile else None,
-            "assigned_at": demand.assigned_at,
-            "created_at": demand.created_at,
-            "updated_at": demand.updated_at
-        })
+    demands_list = [_transform_demand(demand) for demand in demands]
 
     logger.info(f"Fetched {len(demands_list)} claimed demands for agent {agent_id}")
     return demands_list
@@ -383,8 +315,8 @@ async def claim_demand(
         .values(
             status="assigned",
             assigned_agent_id=agent_id,
-            assigned_at=datetime.now(datetime.now().astimezone().tzinfo),
-            updated_at=datetime.now(datetime.now().astimezone().tzinfo)
+            assigned_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc)
         )
     )
 
@@ -460,7 +392,7 @@ async def update_demand_status(
 
     # Update status
     demand.status = new_status
-    demand.updated_at = datetime.now(datetime.now().astimezone().tzinfo)
+    demand.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
     await db.refresh(demand)
@@ -541,7 +473,7 @@ async def delete_demand(
 async def get_demand_by_id(
     db: AsyncSession,
     demand_id: str
-) -> Optional[dict]:
+) -> Optional[DemandResponse]:
     """
     Get single demand by ID with buyer and agent details.
 
@@ -571,32 +503,4 @@ async def get_demand_by_id(
     if not demand:
         return None
 
-    # Transform to dict
-    assigned_agent = demand.assigned_agent
-    assigned_agent_profile = assigned_agent.agent_profile if assigned_agent else None
-
-    return {
-        "id": str(demand.id),
-        "buyer_id": str(demand.buyer_id),
-        "buyer_name": demand.buyer.name,
-        "buyer_email": demand.buyer.email,
-        "buyer_company": demand.buyer.company_name,  # Now in User table
-        "budget_min_eur": float(demand.budget_min_eur),
-        "budget_max_eur": float(demand.budget_max_eur),
-        "budget_min_lek": float(demand.budget_min_lek),
-        "budget_max_lek": float(demand.budget_max_lek),
-        "category": demand.category,
-        "preferred_city_en": demand.preferred_city_en,
-        "preferred_area": demand.preferred_area,
-        "description": demand.description,
-        "status": demand.status,
-        "demand_type": demand.demand_type,
-        "assigned_agent_id": str(assigned_agent.id) if assigned_agent else None,
-        "assigned_agent_name": assigned_agent.name if assigned_agent else None,
-        "assigned_agent_email": assigned_agent.email if assigned_agent else None,
-        "assigned_agent_phone": assigned_agent.phone_number if assigned_agent else None,  # phone_number now on User
-        "assigned_agent_whatsapp": assigned_agent_profile.whatsapp_number if assigned_agent_profile else None,
-        "assigned_at": demand.assigned_at,
-        "created_at": demand.created_at,
-        "updated_at": demand.updated_at
-    }
+    return _transform_demand(demand)

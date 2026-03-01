@@ -11,13 +11,6 @@ from app.schemas.base import BaseSchema
 # AGENT VERIFICATION
 # ============================================================================
 
-class AgentVerifyRequest(BaseModel):
-    """Request schema for approving agent."""
-
-    # No body needed - just the agent_id in path
-    pass
-
-
 class AgentRejectRequest(BaseModel):
     """Request schema for rejecting agent."""
 
@@ -41,20 +34,6 @@ class AgentVerificationResponse(BaseSchema):
     verification_status: str
 
 
-class AgentSuspendRequest(BaseModel):
-    """Request schema for suspending agent."""
-
-    reason: Optional[str] = Field(None, max_length=500)
-
-
-class AgentSuspendResponse(BaseSchema):
-    """Response schema for agent suspension."""
-
-    success: bool = True
-    message: str = "Agent suspended successfully"
-    agent_id: str
-
-
 # ============================================================================
 # USER MANAGEMENT (CREATE)
 # ============================================================================
@@ -67,7 +46,7 @@ class AdminCreateAgentRequest(BaseModel):
     password: str = Field(..., min_length=8, max_length=100)
 
     # Agent-specific fields
-    agency_name: str = Field(..., min_length=2, max_length=200)
+    company_name: str = Field(..., min_length=2, max_length=200)
     license_number: str = Field(..., min_length=2, max_length=100)
     phone: str = Field(..., min_length=8, max_length=20)
     whatsapp: Optional[str] = Field(None, min_length=8, max_length=20)
@@ -83,7 +62,7 @@ class AdminCreateAgentRequest(BaseModel):
                 "name": "New Agent",
                 "email": "newagent@example.com",
                 "password": "SecurePass123",
-                "agency_name": "New Agency",
+                "company_name": "New Agency",
                 "license_number": "LIC-2024-999",
                 "phone": "+355691111111",
                 "email_verified": True,
@@ -130,18 +109,6 @@ class AdminCreateUserResponse(BaseSchema):
 # ============================================================================
 # USER MANAGEMENT (UPDATE)
 # ============================================================================
-
-class AdminUpdateAgentRequest(BaseModel):
-    """Request schema for admin updating agent."""
-
-    name: Optional[str] = Field(None, min_length=2, max_length=100)
-    email: Optional[EmailStr] = None
-    agency_name: Optional[str] = Field(None, min_length=2, max_length=200)
-    license_number: Optional[str] = Field(None, min_length=2, max_length=100)
-    phone: Optional[str] = Field(None, min_length=8, max_length=20)
-    whatsapp: Optional[str] = Field(None, min_length=8, max_length=20)
-    bio_en: Optional[str] = Field(None, max_length=1000)
-
 
 class AdminToggleEmailVerificationRequest(BaseModel):
     """Request schema for toggling email verification."""
@@ -206,19 +173,19 @@ class PlatformStatsResponse(BaseSchema):
 # USER LISTS
 # ============================================================================
 
-class UserListItem(BaseModel):
+class UserListItem(BaseSchema):
     """User list item for admin dashboard."""
 
     id: str
-    name: Optional[str]
-    email: Optional[str]
+    name: Optional[str] = None
+    email: Optional[str] = None
     role: str
     email_verified: bool
     created_at: datetime
 
     # Agent-specific (if role = agent)
     verification_status: Optional[str] = None
-    agency_name: Optional[str] = None
+    company_name: Optional[str] = None
     credit_balance: Optional[int] = None
 
 

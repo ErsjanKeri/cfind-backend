@@ -62,13 +62,11 @@ class Listing(Base):
     real_description_en = Column(String, nullable=True)
 
     # ========================================================================
-    # FINANCIALS (dual currency: EUR and LEK)
+    # FINANCIALS (EUR only)
     # ========================================================================
-    # Using Numeric for precise decimal values (matches Prisma Decimal)
+    # Using Numeric for precise decimal values
     asking_price_eur = Column(Numeric(precision=12, scale=2), nullable=False, index=True)
-    asking_price_lek = Column(Numeric(precision=15, scale=2), nullable=False)
     monthly_revenue_eur = Column(Numeric(precision=12, scale=2), nullable=True, index=True)
-    monthly_revenue_lek = Column(Numeric(precision=15, scale=2), nullable=True)
     roi = Column(Numeric(precision=5, scale=2), nullable=True, index=True)  # Auto-calculated
 
     # ========================================================================

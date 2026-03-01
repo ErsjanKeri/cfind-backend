@@ -11,21 +11,21 @@ Endpoints:
 - GET /users/me/documents - Get agent document upload status
 """
 
-from typing import Annotated
+import logging
+from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, UploadFile, File, Form, status
 from fastapi.exceptions import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional
 
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.user import (
     UserResponse,
     UserProfileUpdate, UserProfileUpdateResponse,
-    AgentProfileUpdate, AgentProfileUpdateResponse,
-    # BuyerProfileUpdate, BuyerProfileUpdateResponse, # REMOVED
+    AgentProfileResponse, AgentProfileUpdate, AgentProfileUpdateResponse,
     ImageUploadResponse,
-    DocumentUploadStatus, DocumentUploadStatusResponse
+    DocumentUploadStatus, DocumentUploadStatusResponse,
+    VerificationStatusResponse,
 )
 from app.api.deps import (
     get_current_user,
@@ -33,7 +33,10 @@ from app.api.deps import (
     verify_csrf_token,
     RoleChecker
 )
-from app.services import user_service
+from app.repositories import user_repo
+from app.services.upload_service import upload_image_direct, upload_document_direct, delete_old_image
+
+logger = logging.getLogger(__name__)
 
 # Initialize router
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -61,8 +64,9 @@ async def get_current_user_profile(
     - Agent profile (if role = agent)
     - Buyer profile (if role = buyer)
     """
-    user = await user_service.get_current_user_profile(db, str(current_user.id))
-    # ✅ BaseSchema automatically converts UUIDs to strings
+    user = await user_repo.get_user_by_id(db, str(current_user.id), include_profiles=True)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return user
 
 
@@ -86,11 +90,7 @@ async def update_user_profile(
     - User must re-verify email
     - New verification email is sent
     """
-    updated_user = await user_service.update_user_profile(
-        db,
-        str(current_user.id),
-        update_data
-    )
+    updated_user = await user_repo.update_user_basic_info(db, str(current_user.id), update_data)
 
     return UserProfileUpdateResponse(
         success=True,
@@ -124,11 +124,15 @@ async def upload_profile_image(
     - Supports: JPEG, PNG, WebP, GIF
     - Max size: 10 MB
     """
-    image_url = await user_service.upload_user_profile_image(
-        db,
-        str(current_user.id),
-        file
-    )
+    # Upload new image to S3
+    image_url = await upload_image_direct(file, folder="profiles")
+
+    # Delete old image if exists
+    if current_user.image:
+        await delete_old_image(current_user.image)
+
+    # Update user record
+    await user_repo.update_user_basic_info(db, str(current_user.id), UserProfileUpdate(image=image_url))
 
     return ImageUploadResponse(
         success=True,
@@ -172,31 +176,47 @@ async def update_agent_profile(
     # Upload documents to S3 if provided
     document_urls = {}
     if license_document:
-        from app.services.upload_service import upload_document_direct
-        document_urls['license_document_url'] = await upload_document_direct(license_document, 'license')
+        document_urls['license_document_url'] = await upload_document_direct(
+            license_document,
+            str(current_user.id),
+            'license'
+        )
 
     if company_document:
-        from app.services.upload_service import upload_document_direct
-        document_urls['company_document_url'] = await upload_document_direct(company_document, 'company')
+        document_urls['company_document_url'] = await upload_document_direct(
+            company_document,
+            str(current_user.id),
+            'company'
+        )
 
     if id_document:
-        from app.services.upload_service import upload_document_direct
-        document_urls['id_document_url'] = await upload_document_direct(id_document, 'id')
+        document_urls['id_document_url'] = await upload_document_direct(
+            id_document,
+            str(current_user.id),
+            'id'
+        )
+
+    # Convert empty strings to None to avoid validation errors
+    # This ensures that empty form fields don't fail min_length validation
+    def normalize_field(value: Optional[str]) -> Optional[str]:
+        """Convert empty strings to None, strip whitespace from non-empty strings."""
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped if stripped else None
 
     # Create update object with text fields + document URLs
     from app.schemas.user import AgentProfileUpdate
     update_data = AgentProfileUpdate(
-        license_number=license_number,
-        whatsapp_number=whatsapp_number,
-        bio_en=bio_en,
+        license_number=normalize_field(license_number),
+        whatsapp_number=normalize_field(whatsapp_number),
+        bio_en=normalize_field(bio_en),
         **document_urls  # Add uploaded document URLs
     )
 
-    # Update profile
-    agent_profile_dict, re_verification_triggered = await user_service.update_agent_profile_service(
-        db,
-        str(current_user.id),
-        update_data
+    # Update profile (repo handles re-verification triggers)
+    agent_profile, re_verification_triggered = await user_repo.update_agent_profile(
+        db, str(current_user.id), update_data
     )
 
     message = "Agent profile updated successfully"
@@ -206,13 +226,14 @@ async def update_agent_profile(
     return AgentProfileUpdateResponse(
         success=True,
         message=message,
-        agent_profile=agent_profile_dict,
+        agent_profile=AgentProfileResponse.model_validate(agent_profile),
         re_verification_triggered=re_verification_triggered
     )
 
 
 @router.get(
     "/me/verification-status",
+    response_model=VerificationStatusResponse,
     summary="Get agent verification status",
     description="Get comprehensive verification status for current agent"
 )
@@ -230,15 +251,12 @@ async def get_verification_status(
     - can_create_listings: Verified + all documents uploaded
     - rejection_reason: If rejected
     """
-    status = await user_service.get_verification_status(
-        db,
-        str(current_user.id)
-    )
+    verification = await user_repo.get_agent_verification_status(db, str(current_user.id))
 
-    return {
-        "success": True,
-        "status": status
-    }
+    return VerificationStatusResponse(
+        success=True,
+        status=verification
+    )
 
 
 @router.get(
@@ -256,21 +274,33 @@ async def get_document_status(
 
     Shows which documents are uploaded and which are missing.
     """
-    status = await user_service.get_agent_documents_status(
-        db,
-        str(current_user.id)
-    )
+    complete, status_dict = await user_repo.check_agent_documents_complete(db, str(current_user.id))
+    user = await user_repo.get_user_by_id(db, str(current_user.id), include_profiles=True)
+    if not user or not user.agent_profile:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent profile not found")
+
+    ap = user.agent_profile
+    missing = []
+    if not ap.license_document_url:
+        missing.append("license")
+    if not ap.company_document_url:
+        missing.append("company")
+    if not ap.id_document_url:
+        missing.append("id")
+
+    doc_status = {
+        "license_document_uploaded": bool(ap.license_document_url),
+        "company_document_uploaded": bool(ap.company_document_url),
+        "id_document_uploaded": bool(ap.id_document_url),
+        "license_document_url": ap.license_document_url,
+        "company_document_url": ap.company_document_url,
+        "id_document_url": ap.id_document_url,
+        "all_documents_uploaded": complete,
+        "missing": missing
+    }
 
     return DocumentUploadStatusResponse(
         success=True,
-        status=DocumentUploadStatus(**status),
-        message=f"Documents complete: {status['all_complete']}"
+        status=DocumentUploadStatus(**doc_status),
+        message=f"Documents complete: {complete}"
     )
-
-
-# ============================================================================
-# BUYER PROFILE MANAGEMENT
-# ============================================================================
-
-# BUYER PROFILE ENDPOINT REMOVED
-# Buyers now update company_name, phone_number, website via PUT /api/users/me

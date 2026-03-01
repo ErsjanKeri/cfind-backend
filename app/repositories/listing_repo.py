@@ -11,12 +11,12 @@ Handles:
 """
 
 import logging
-from typing import Optional, List, Tuple
-from datetime import datetime
-from decimal import Decimal
+import uuid
+from typing import Optional, List, Tuple, Union
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, and_, or_, func, case, desc, asc
-from sqlalchemy.orm import selectinload, joinedload
+from sqlalchemy import select, delete, and_, or_, func, case, desc, asc
+from sqlalchemy.orm import selectinload
 from fastapi import HTTPException, status
 
 from app.models.listing import Listing, ListingImage
@@ -24,7 +24,9 @@ from app.models.user import User, AgentProfile
 from app.schemas.listing import (
     ListingCreate,
     ListingUpdate,
-    ListingSearchParams
+    ListingSearchParams,
+    ListingPublic,
+    ListingPrivate
 )
 
 logger = logging.getLogger(__name__)
@@ -34,121 +36,34 @@ logger = logging.getLogger(__name__)
 # DATA TRANSFORMATION (PUBLIC VS PRIVATE)
 # ============================================================================
 
-def transform_public_listing(listing: Listing, agent: User) -> dict:
-    """
-    Transform listing to public view - hides sensitive information.
+def _calculate_roi(monthly_revenue, asking_price) -> Optional[float]:
+    """Calculate ROI percentage from monthly revenue and asking price."""
+    if monthly_revenue and asking_price:
+        return round((float(monthly_revenue) * 12 / float(asking_price)) * 100, 2)
+    return None
 
-    Hidden fields:
-    - real_business_name
-    - real_location_address (exact address)
-    - real_location_lat, real_location_lng (coordinates)
-    - real_description_en
 
-    Args:
-        listing: Listing object from database
-        agent: Agent user object (for contact info)
-
-    Returns:
-        Dict with public fields only
-
-    Example:
-        >>> public_listing = transform_public_listing(listing, agent)
-        >>> # public_listing contains no real business name or exact address
-    """
-    # Convert Decimal to float for JSON serialization
-    asking_price_eur = float(listing.asking_price_eur) if listing.asking_price_eur else 0
-    asking_price_lek = float(listing.asking_price_lek) if listing.asking_price_lek else 0
-    monthly_revenue_eur = float(listing.monthly_revenue_eur) if listing.monthly_revenue_eur else None
-    monthly_revenue_lek = float(listing.monthly_revenue_lek) if listing.monthly_revenue_lek else None
-    roi = float(listing.roi) if listing.roi else None
-
+def _agent_fields(agent: User) -> dict:
+    """Extract agent contact fields for listing responses."""
     return {
-        "id": str(listing.id),
-        "agent_id": str(listing.agent_id),
-        "status": listing.status,
-
-        # Promotion
-        "promotion_tier": listing.promotion_tier,
-        "promotion_start_date": listing.promotion_start_date,
-        "promotion_end_date": listing.promotion_end_date,
-
-        # PUBLIC information only
-        "public_title_en": listing.public_title_en,
-        "public_description_en": listing.public_description_en,
-        "category": listing.category,
-        "public_location_city_en": listing.public_location_city_en,
-        "public_location_area": listing.public_location_area,
-
-        # Financials (shown to help buyers assess)
-        "asking_price_eur": asking_price_eur,
-        "asking_price_lek": asking_price_lek,
-        "monthly_revenue_eur": monthly_revenue_eur,
-        "monthly_revenue_lek": monthly_revenue_lek,
-        "roi": roi,
-
-        # Business details
-        "employee_count": listing.employee_count,
-        "years_in_operation": listing.years_in_operation,
-        "is_physically_verified": listing.is_physically_verified,
-
-        # Images
-        "images": [
-            {
-                "id": str(img.id),
-                "url": img.url,
-                "order": img.order,
-                "created_at": img.created_at
-            }
-            for img in sorted(listing.images, key=lambda x: x.order)
-        ],
-
-        # Metadata
-        "view_count": listing.view_count,
-        "created_at": listing.created_at,
-        "updated_at": listing.updated_at,
-
-        # Agent contact info (shown immediately - no lead creation required)
         "agent_name": agent.name,
-        "agent_agency_name": agent.company_name,  # agency_name removed from AgentProfile, use User.company_name
-        "agent_phone": agent.phone_number,  # phone_number removed from AgentProfile, use User.phone_number
+        "agent_agency_name": agent.company_name,
+        "agent_phone": agent.phone_number,
         "agent_whatsapp": agent.agent_profile.whatsapp_number if agent.agent_profile else None,
-        "agent_email": agent.email
+        "agent_email": agent.email,
     }
 
 
-def transform_private_listing(listing: Listing, agent: User) -> dict:
-    """
-    Transform listing to private view - shows ALL information.
+def transform_public_listing(listing: Listing, agent: User) -> ListingPublic:
+    """Transform listing to public view — hides real business name, address, coordinates."""
+    result = ListingPublic.model_validate(listing)
+    return result.model_copy(update=_agent_fields(agent))
 
-    Visible to:
-    - Listing owner (agent)
-    - Admin
 
-    Shows everything including:
-    - Real business name
-    - Exact address and coordinates
-    - Private description
-
-    Args:
-        listing: Listing object from database
-        agent: Agent user object
-
-    Returns:
-        Dict with all fields (public + private)
-    """
-    # Start with public transformation
-    listing_dict = transform_public_listing(listing, agent)
-
-    # Add private fields
-    listing_dict.update({
-        "real_business_name": listing.real_business_name,
-        "real_location_address": listing.real_location_address,
-        "real_location_lat": listing.real_location_lat,
-        "real_location_lng": listing.real_location_lng,
-        "real_description_en": listing.real_description_en
-    })
-
-    return listing_dict
+def transform_private_listing(listing: Listing, agent: User) -> ListingPrivate:
+    """Transform listing to private view — includes all fields. For owner/admin."""
+    result = ListingPrivate.model_validate(listing)
+    return result.model_copy(update=_agent_fields(agent))
 
 
 # ============================================================================
@@ -177,12 +92,7 @@ async def create_listing(
         >>> listing = await create_listing(db, agent_id="123...", listing_data=data)
         >>> print(listing.id, listing.roi)
     """
-    # Calculate ROI if revenue provided
-    roi = None
-    if listing_data.monthly_revenue_eur and listing_data.asking_price_eur:
-        annual_revenue = float(listing_data.monthly_revenue_eur) * 12
-        roi = (annual_revenue / float(listing_data.asking_price_eur)) * 100
-        roi = round(roi, 2)
+    roi = _calculate_roi(listing_data.monthly_revenue_eur, listing_data.asking_price_eur)
 
     # Create listing
     listing = Listing(
@@ -206,9 +116,7 @@ async def create_listing(
 
         # Financials
         asking_price_eur=listing_data.asking_price_eur,
-        asking_price_lek=listing_data.asking_price_lek,
         monthly_revenue_eur=listing_data.monthly_revenue_eur,
-        monthly_revenue_lek=listing_data.monthly_revenue_lek,
         roi=roi,
 
         # Business details
@@ -290,7 +198,7 @@ async def get_listings(
     db: AsyncSession,
     search_params: ListingSearchParams,
     mode: str = "public"
-) -> Tuple[List[dict], int]:
+) -> Tuple[List[Union[ListingPublic, ListingPrivate]], int]:
     """
     Search and filter listings with pagination.
 
@@ -356,12 +264,6 @@ async def get_listings(
     if search_params.max_price_eur:
         query = query.where(Listing.asking_price_eur <= search_params.max_price_eur)
 
-    # Price range (LEK)
-    if search_params.min_price_lek:
-        query = query.where(Listing.asking_price_lek >= search_params.min_price_lek)
-    if search_params.max_price_lek:
-        query = query.where(Listing.asking_price_lek <= search_params.max_price_lek)
-
     # ROI range
     if search_params.min_roi:
         query = query.where(Listing.roi >= search_params.min_roi)
@@ -393,55 +295,19 @@ async def get_listings(
         else_=1
     )
 
-    # Apply sorting
-    if search_params.sort_by == "newest":
-        # Premium > Featured > Standard, then newest first within each tier
-        query = query.order_by(
-            desc(tier_priority),
-            desc(Listing.created_at)
-        )
-
-    elif search_params.sort_by == "price_low":
-        # Premium > Featured > Standard, then price low to high within each tier
-        query = query.order_by(
-            desc(tier_priority),
-            asc(Listing.asking_price_eur)
-        )
-
-    elif search_params.sort_by == "price_high":
-        # Premium > Featured > Standard, then price high to low within each tier
-        query = query.order_by(
-            desc(tier_priority),
-            desc(Listing.asking_price_eur)
-        )
-
-    elif search_params.sort_by == "roi_high":
-        # Premium > Featured > Standard, then ROI high to low within each tier
-        query = query.order_by(
-            desc(tier_priority),
-            desc(Listing.roi.nullslast())  # NULL ROI values last
-        )
-
-    elif search_params.sort_by == "roi_low":
-        # Premium > Featured > Standard, then ROI low to high within each tier
-        query = query.order_by(
-            desc(tier_priority),
-            asc(Listing.roi.nullsfirst())  # NULL ROI values first
-        )
-
-    elif search_params.sort_by == "most_viewed":
-        # Premium > Featured > Standard, then most viewed within each tier
-        query = query.order_by(
-            desc(tier_priority),
-            desc(Listing.view_count)
-        )
-
-    else:
-        # Default: newest with tier priority
-        query = query.order_by(
-            desc(tier_priority),
-            desc(Listing.created_at)
-        )
+    # Apply sorting: always tier priority first, then secondary sort
+    secondary_sort = {
+        "newest": desc(Listing.created_at),
+        "price_low": asc(Listing.asking_price_eur),
+        "price_high": desc(Listing.asking_price_eur),
+        "roi_high": desc(Listing.roi.nullslast()),
+        "roi_low": asc(Listing.roi.nullsfirst()),
+        "most_viewed": desc(Listing.view_count),
+    }
+    query = query.order_by(
+        desc(tier_priority),
+        secondary_sort.get(search_params.sort_by, desc(Listing.created_at))
+    )
 
     # ========================================================================
     # COUNT TOTAL (before pagination)
@@ -461,14 +327,8 @@ async def get_listings(
     rows = result.all()
 
     # Transform to public or private view
-    listings_list = []
-    for listing, agent in rows:
-        if mode == "public":
-            listing_dict = transform_public_listing(listing, agent)
-        else:
-            listing_dict = transform_private_listing(listing, agent)
-
-        listings_list.append(listing_dict)
+    transform = transform_private_listing if mode == "private" else transform_public_listing
+    listings_list = [transform(listing, agent) for listing, agent in rows]
 
     logger.info(f"Fetched {len(listings_list)} listings (page {search_params.page}, total: {total})")
     return listings_list, total
@@ -481,7 +341,7 @@ async def get_listings(
 async def get_agent_listings(
     db: AsyncSession,
     agent_id: str
-) -> List[dict]:
+) -> List[ListingPrivate]:
     """
     Get all listings for a specific agent (private view).
 
@@ -512,11 +372,7 @@ async def get_agent_listings(
 
     rows = result.all()
 
-    # Transform to private view
-    listings_list = []
-    for listing, agent in rows:
-        listing_dict = transform_private_listing(listing, agent)
-        listings_list.append(listing_dict)
+    listings_list = [transform_private_listing(listing, agent) for listing, agent in rows]
 
     logger.info(f"Fetched {len(listings_list)} listings for agent {agent_id}")
     return listings_list
@@ -561,72 +417,19 @@ async def update_listing(
             detail="Listing not found"
         )
 
-    # Track if ROI needs recalculation
+    # Apply all provided fields (images handled separately below)
+    roi_fields = {"asking_price_eur", "monthly_revenue_eur"}
     recalculate_roi = False
 
-    # Update fields
-    if update_data.real_business_name is not None:
-        listing.real_business_name = update_data.real_business_name
+    for field, value in update_data.model_dump(exclude_unset=True).items():
+        if field == "images":
+            continue
+        setattr(listing, field, value)
+        if field in roi_fields:
+            recalculate_roi = True
 
-    if update_data.real_location_address is not None:
-        listing.real_location_address = update_data.real_location_address
-
-    if update_data.real_location_lat is not None:
-        listing.real_location_lat = update_data.real_location_lat
-
-    if update_data.real_location_lng is not None:
-        listing.real_location_lng = update_data.real_location_lng
-
-    if update_data.real_description_en is not None:
-        listing.real_description_en = update_data.real_description_en
-
-    if update_data.public_title_en is not None:
-        listing.public_title_en = update_data.public_title_en
-
-    if update_data.public_description_en is not None:
-        listing.public_description_en = update_data.public_description_en
-
-    if update_data.category is not None:
-        listing.category = update_data.category
-
-    if update_data.public_location_city_en is not None:
-        listing.public_location_city_en = update_data.public_location_city_en
-
-    if update_data.public_location_area is not None:
-        listing.public_location_area = update_data.public_location_area
-
-    if update_data.asking_price_eur is not None:
-        listing.asking_price_eur = update_data.asking_price_eur
-        recalculate_roi = True
-
-    if update_data.asking_price_lek is not None:
-        listing.asking_price_lek = update_data.asking_price_lek
-
-    if update_data.monthly_revenue_eur is not None:
-        listing.monthly_revenue_eur = update_data.monthly_revenue_eur
-        recalculate_roi = True
-
-    if update_data.monthly_revenue_lek is not None:
-        listing.monthly_revenue_lek = update_data.monthly_revenue_lek
-
-    if update_data.employee_count is not None:
-        listing.employee_count = update_data.employee_count
-
-    if update_data.years_in_operation is not None:
-        listing.years_in_operation = update_data.years_in_operation
-
-    if update_data.status is not None:
-        listing.status = update_data.status
-
-    # Admin-only field
-    if update_data.is_physically_verified is not None:
-        listing.is_physically_verified = update_data.is_physically_verified
-
-    # Recalculate ROI if needed
-    if recalculate_roi and listing.monthly_revenue_eur and listing.asking_price_eur:
-        annual_revenue = float(listing.monthly_revenue_eur) * 12
-        roi = (annual_revenue / float(listing.asking_price_eur)) * 100
-        listing.roi = round(roi, 2)
+    if recalculate_roi:
+        listing.roi = _calculate_roi(listing.monthly_revenue_eur, listing.asking_price_eur)
 
     # Update images if provided
     if update_data.images is not None:
@@ -645,7 +448,7 @@ async def update_listing(
             )
             db.add(image)
 
-    listing.updated_at = datetime.utcnow()
+    listing.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
     await db.refresh(listing)

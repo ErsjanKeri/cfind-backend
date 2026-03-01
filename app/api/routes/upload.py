@@ -1,6 +1,11 @@
 """
 File upload routes.
 
+Handles:
+- Image uploads (profiles, listings) via presigned URLs or direct upload
+- Agent verification document uploads (license, company registration, ID)
+- Document confirmation and profile updates
+
 Endpoints:
 - POST /upload/presigned/image - Generate presigned URL for image upload
 - POST /upload/presigned/document - Generate presigned URL for agent document upload
@@ -10,73 +15,43 @@ Endpoints:
 """
 
 from typing import Annotated
-from fastapi import APIRouter, Depends, UploadFile, File, Query, status
-from fastapi.exceptions import HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, UploadFile, File, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models.user import User
-from app.api.deps import get_current_user, get_verified_user, verify_csrf_token, RoleChecker
+from app.api.deps import get_verified_user, verify_csrf_token, RoleChecker
+from app.schemas.upload import (
+    PresignedImageRequest,
+    PresignedDocumentRequest,
+    PresignedUrlResponse,
+    DirectUploadResponse,
+    ConfirmDocumentUploadRequest,
+    ConfirmDocumentUploadResponse,
+)
 from app.services.upload_service import (
     generate_image_upload_url,
     generate_document_upload_url,
     upload_image_direct,
     upload_document_direct
 )
-from app.services.user_service import upload_agent_document
+from app.repositories import user_repo
+from app.schemas.user import AgentProfileUpdate
+
+
+async def _update_agent_document(db, user_id: str, document_type: str, document_url: str):
+    """Update agent profile with uploaded document URL. Returns (agent_profile, re_verification_triggered)."""
+    update_data = AgentProfileUpdate()
+    if document_type == "license":
+        update_data.license_document_url = document_url
+    elif document_type == "company":
+        update_data.company_document_url = document_url
+    elif document_type == "id":
+        update_data.id_document_url = document_url
+    return await user_repo.update_agent_profile(db, user_id, update_data)
 
 # Initialize router
 router = APIRouter(prefix="/upload", tags=["File Upload"])
-
-
-# ============================================================================
-# PYDANTIC SCHEMAS
-# ============================================================================
-
-class PresignedImageRequest(BaseModel):
-    """Request schema for presigned image URL."""
-    filename: str = Field(..., min_length=1, max_length=255)
-    content_type: str = Field(..., pattern="^image/(jpeg|jpg|png|webp|gif)$")
-    folder: str = Field(default="general", pattern="^(general|profiles|listings)$")
-
-
-class PresignedDocumentRequest(BaseModel):
-    """Request schema for presigned document URL."""
-    filename: str = Field(..., min_length=1, max_length=255)
-    content_type: str = Field(..., pattern="^(application/pdf|image/(jpeg|jpg|png))$")
-    document_type: str = Field(..., pattern="^(license|company|id)$")
-
-
-class PresignedUrlResponse(BaseModel):
-    """Response schema for presigned URL."""
-    success: bool = True
-    message: str = "Presigned URL generated successfully"
-    upload_url: str
-    fields: dict
-    s3_key: str
-    public_url: str  # Where file will be accessible after upload
-
-
-class DirectUploadResponse(BaseModel):
-    """Response schema for direct upload."""
-    success: bool = True
-    message: str = "File uploaded successfully"
-    url: str
-
-
-class ConfirmDocumentUploadRequest(BaseModel):
-    """Request schema for confirming document upload."""
-    document_type: str = Field(..., pattern="^(license|company|id)$")
-    document_url: str = Field(..., min_length=10)
-
-
-class ConfirmDocumentUploadResponse(BaseModel):
-    """Response schema for document upload confirmation."""
-    success: bool = True
-    message: str
-    re_verification_triggered: bool
-    verification_status: str
 
 
 # ============================================================================
@@ -247,11 +222,8 @@ async def upload_document_directly(
     )
 
     # Update agent profile with document URL (triggers re-verification)
-    _, re_verification_triggered = await upload_agent_document(
-        db,
-        str(current_user.id),
-        document_type,
-        document_url
+    _, re_verification_triggered = await _update_agent_document(
+        db, str(current_user.id), document_type, document_url
     )
 
     message = f"{document_type.capitalize()} document uploaded successfully"
@@ -292,11 +264,8 @@ async def confirm_document_upload(
 
     **Triggers re-verification** (status → "pending", listings hidden).
     """
-    agent_profile_dict, re_verification_triggered = await upload_agent_document(
-        db,
-        str(current_user.id),
-        confirm_data.document_type,
-        confirm_data.document_url
+    agent_profile, re_verification_triggered = await _update_agent_document(
+        db, str(current_user.id), confirm_data.document_type, confirm_data.document_url
     )
 
     message = f"{confirm_data.document_type.capitalize()} document confirmed"
@@ -307,61 +276,5 @@ async def confirm_document_upload(
         success=True,
         message=message,
         re_verification_triggered=re_verification_triggered,
-        verification_status=agent_profile_dict["verification_status"]
-    )
-
-
-# ============================================================================
-# GENERIC PRESIGNED URL (Phase 5 - Frontend Compatibility)
-# ============================================================================
-
-@router.post(
-    "/presigned-post",
-    response_model=PresignedUrlResponse,
-    summary="Generate presigned URL (generic)",
-    description="Generic presigned URL endpoint for any file type"
-)
-async def get_presigned_url_generic(
-    file_name: str,
-    file_type: str,
-    category: str,
-    current_user: Annotated[User, Depends(get_current_user)],
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Generate presigned URL for file upload (generic endpoint).
-
-    **Categories:**
-    - avatar: Profile images
-    - listing: Listing images
-    - document: Agent documents
-
-    This endpoint routes to the appropriate upload type based on category.
-    """
-    from app.services.upload_service import generate_image_upload_url, generate_document_upload_url
-
-    if category == "avatar" or category == "listing":
-        # Use image upload
-        presigned_data = await generate_image_upload_url(
-            user_id=str(current_user.id),
-            category=category,
-            filename=file_name,
-            content_type=file_type
-        )
-    elif category == "document":
-        # Use document upload
-        presigned_data = await generate_document_upload_url(
-            user_id=str(current_user.id),
-            document_type="license",  # Default, will be overridden
-            filename=file_name,
-            content_type=file_type
-        )
-    else:
-        raise HTTPException(status_code=400, detail="Invalid category")
-
-    return PresignedUrlResponse(
-        upload_url=presigned_data["url"],
-        fields=presigned_data["fields"],
-        s3_key=presigned_data["key"],
-        public_url=presigned_data["public_url"]
+        verification_status=agent_profile.verification_status
     )

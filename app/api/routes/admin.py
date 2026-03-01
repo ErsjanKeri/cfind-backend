@@ -13,6 +13,7 @@ Endpoints:
 - POST /admin/credits/adjust - Adjust agent credits
 """
 
+import logging
 from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,19 +24,24 @@ from app.schemas.admin import (
     PlatformStatsResponse,
     AdminUsersListResponse,
     AdminCreateAgentRequest, AdminCreateBuyerRequest, AdminCreateUserResponse,
-    AgentVerifyRequest, AgentRejectRequest, AgentVerificationResponse,
+    AgentRejectRequest, AgentVerificationResponse,
     AdminToggleEmailVerificationRequest, AdminToggleEmailVerificationResponse,
     AdminDeleteResponse
 )
 from app.schemas.promotion import (
-    AdminCreditAdjustmentRequest, AdminCreditAdjustmentResponse
+    AdminCreditAdjustmentRequest, AdminCreditAdjustmentResponse,
+    CreditTransactionResponse
 )
 from app.api.deps import (
     RoleChecker,
     verify_csrf_token
 )
-from app.services import admin_service
-from app.services.promotion_service import admin_adjust_credits_service
+from app.repositories import admin_repo
+from app.repositories.user_repo import get_user_by_id
+from app.services.email_service import send_agent_rejection_email
+from app.repositories import promotion_repo
+
+logger = logging.getLogger(__name__)
 
 # Initialize router
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -71,7 +77,7 @@ async def get_platform_stats(
     **Use case:**
     Admin dashboard overview to monitor platform health.
     """
-    stats = await admin_service.get_platform_stats_service(db)
+    stats = await admin_repo.get_platform_stats(db)
 
     return PlatformStatsResponse(
         success=True,
@@ -112,7 +118,7 @@ async def get_all_users(
     **Use case:**
     Admin views all platform users for management.
     """
-    users = await admin_service.get_all_users_service(db, role)
+    users = await admin_repo.get_all_users(db, role)
 
     return AdminUsersListResponse(
         success=True,
@@ -151,13 +157,13 @@ async def verify_agent(
     **Use case:**
     Admin reviews agent documents and approves them.
     """
-    result = await admin_service.verify_agent_service(db, agent_id)
+    agent_profile = await admin_repo.verify_agent(db, agent_id)
 
     return AgentVerificationResponse(
         success=True,
         message="Agent verified successfully. Their listings are now visible to buyers.",
-        agent_id=result["agent_id"],
-        verification_status=result["verification_status"]
+        agent_id=str(agent_profile.user_id),
+        verification_status=agent_profile.verification_status
     )
 
 
@@ -188,18 +194,27 @@ async def reject_agent(
     **Use case:**
     Admin finds issues with agent documents and rejects with explanation.
     """
-    result = await admin_service.reject_agent_service(
-        db,
-        agent_id,
-        rejection_data.rejection_reason,
-        str(current_user.id)
+    agent_profile = await admin_repo.reject_agent(
+        db, agent_id, rejection_data.rejection_reason, str(current_user.id)
     )
+
+    # Send rejection email (don't fail the request if email fails)
+    agent_user = await get_user_by_id(db, agent_id, include_profiles=True)
+    if agent_user and agent_user.email:
+        try:
+            await send_agent_rejection_email(
+                to_email=agent_user.email,
+                agent_name=agent_user.name or "Agent",
+                rejection_reason=rejection_data.rejection_reason
+            )
+        except Exception as e:
+            logger.error(f"Failed to send rejection email to {agent_user.email}: {e}")
 
     return AgentVerificationResponse(
         success=True,
-        message=f"Agent rejected. Rejection email sent with reason.",
-        agent_id=result["agent_id"],
-        verification_status=result["verification_status"]
+        message="Agent rejected. Rejection email sent with reason.",
+        agent_id=str(agent_profile.user_id),
+        verification_status=agent_profile.verification_status
     )
 
 
@@ -232,12 +247,12 @@ async def create_agent(
     **Use case:**
     Admin creates agent account and can immediately approve them.
     """
-    result = await admin_service.create_agent_service(
+    user = await admin_repo.admin_create_agent(
         db,
         agent_data.name,
         agent_data.email,
         agent_data.password,
-        agent_data.agency_name,
+        agent_data.company_name,
         agent_data.license_number,
         agent_data.phone,
         agent_data.whatsapp,
@@ -249,9 +264,9 @@ async def create_agent(
     return AdminCreateUserResponse(
         success=True,
         message=f"Agent created successfully. Email verified: {agent_data.email_verified}",
-        user_id=result["user_id"],
-        email=result["email"],
-        role=result["role"]
+        user_id=str(user.id),
+        email=user.email,
+        role=user.role
     )
 
 
@@ -279,7 +294,7 @@ async def create_buyer(
     **Use case:**
     Admin creates buyer account for testing or client onboarding.
     """
-    result = await admin_service.create_buyer_service(
+    user = await admin_repo.admin_create_buyer(
         db,
         buyer_data.name,
         buyer_data.email,
@@ -291,9 +306,9 @@ async def create_buyer(
     return AdminCreateUserResponse(
         success=True,
         message=f"Buyer created successfully. Email verified: {buyer_data.email_verified}",
-        user_id=result["user_id"],
-        email=result["email"],
-        role=result["role"]
+        user_id=str(user.id),
+        email=user.email,
+        role=user.role
     )
 
 
@@ -332,7 +347,7 @@ async def delete_user(
     **Use case:**
     Admin removes spam accounts or inactive users.
     """
-    await admin_service.delete_user_service(db, user_id)
+    await admin_repo.admin_delete_user(db, user_id)
 
     return AdminDeleteResponse(
         success=True,
@@ -371,17 +386,13 @@ async def toggle_email_verification(
     - If setting to false: User cannot login
     - If setting to true: User can login immediately
     """
-    result = await admin_service.toggle_email_verification_service(
-        db,
-        user_id,
-        toggle_data.email_verified
-    )
+    user = await admin_repo.toggle_email_verification(db, user_id, toggle_data.email_verified)
 
     return AdminToggleEmailVerificationResponse(
         success=True,
         message=f"Email verification set to {toggle_data.email_verified}",
-        user_id=result["user_id"],
-        email_verified=result["email_verified"]
+        user_id=str(user.id),
+        email_verified=user.email_verified
     )
 
 
@@ -421,12 +432,18 @@ async def adjust_agent_credits(
     - New balance
     - Transaction record
     """
-    new_balance, transaction = await admin_adjust_credits_service(
-        db,
-        adjustment_data.agent_id,
-        adjustment_data.amount,
-        adjustment_data.description
+    transaction = await promotion_repo.create_credit_transaction(
+        db=db,
+        agent_id=adjustment_data.agent_id,
+        amount=adjustment_data.amount,
+        transaction_type="bonus" if adjustment_data.amount > 0 else "adjustment",
+        description=adjustment_data.description
     )
+    await db.commit()
+
+    new_balance = await promotion_repo.get_agent_credit_balance(db, adjustment_data.agent_id)
+
+    logger.info(f"Admin adjusted agent {adjustment_data.agent_id} credits by {adjustment_data.amount}")
 
     return AdminCreditAdjustmentResponse(
         success=True,
@@ -434,5 +451,5 @@ async def adjust_agent_credits(
         agent_id=adjustment_data.agent_id,
         amount_adjusted=adjustment_data.amount,
         new_balance=new_balance,
-        transaction=transaction
+        transaction=CreditTransactionResponse.model_validate(transaction)
     )

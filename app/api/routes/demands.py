@@ -11,8 +11,9 @@ Endpoints:
 - DELETE /demands/{id} - Delete demand (only if active, buyer or admin)
 """
 
+import logging
 from typing import Annotated, Optional
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from decimal import Decimal
 
@@ -31,9 +32,14 @@ from app.api.deps import (
     get_verified_user,
     get_verified_agent,
     verify_csrf_token,
-    RoleChecker
+    RoleChecker,
+    ensure_owner_or_admin
 )
-from app.services import demand_service
+from app.repositories import demand_repo
+from app.services.email_service import send_demand_claimed_email
+from app.core.exceptions import DemandAlreadyClaimedException
+
+logger = logging.getLogger(__name__)
 
 # Initialize router
 router = APIRouter(prefix="/demands", tags=["Buyer Demands"])
@@ -75,11 +81,8 @@ async def create_demand(
 
     **Returns:** Created demand
     """
-    demand_dict = await demand_service.create_demand_service(
-        db,
-        str(current_user.id),
-        demand_data
-    )
+    demand = await demand_repo.create_demand(db, str(current_user.id), demand_data)
+    demand_dict = await demand_repo.get_demand_by_id(db, str(demand.id))
 
     return DemandCreateResponse(
         success=True,
@@ -142,11 +145,8 @@ async def get_active_demands(
         limit=limit
     )
 
-    # Execute search
-    demands, total, total_pages = await demand_service.get_active_demands_service(
-        db,
-        search_params
-    )
+    demands, total = await demand_repo.get_active_demands(db, search_params)
+    total_pages = (total + limit - 1) // limit
 
     return DemandsListResponse(
         success=True,
@@ -197,15 +197,31 @@ async def claim_demand(
     **Historical tracking:**
     Once claimed, demand cannot be deleted (kept for history).
     """
-    demand_dict = await demand_service.claim_demand_service(
-        db,
-        demand_id,
-        current_user
-    )
+    # Attempt claim (optimistic lock — first agent wins)
+    demand = await demand_repo.claim_demand(db, demand_id, str(current_user.id))
+    if not demand:
+        raise DemandAlreadyClaimedException()
+
+    # Send email to buyer with agent contact info
+    agent_profile = current_user.agent_profile
+    try:
+        await send_demand_claimed_email(
+            to_email=demand.buyer.email,
+            buyer_name=demand.buyer.name,
+            agent_name=current_user.name,
+            agent_email=current_user.email,
+            agent_phone=current_user.phone_number,
+            agent_whatsapp=agent_profile.whatsapp_number if agent_profile else None,
+            demand_description=demand.description
+        )
+    except Exception as e:
+        logger.error(f"Failed to send demand claimed email: {e}")
+
+    demand_dict = await demand_repo.get_demand_by_id(db, demand_id)
 
     return DemandClaimResponse(
         success=True,
-        message=f"Demand claimed successfully! Email sent to buyer with your contact information.",
+        message="Demand claimed successfully! Email sent to buyer with your contact information.",
         demand=demand_dict
     )
 
@@ -240,11 +256,9 @@ async def get_buyer_demands(
     **Use case:**
     Buyer tracks their posted demands and sees which agents claimed them.
     """
-    demands = await demand_service.get_buyer_demands_service(
-        db,
-        buyer_id,
-        current_user
-    )
+    ensure_owner_or_admin(buyer_id, current_user, "You are not authorized to view these demands")
+
+    demands = await demand_repo.get_buyer_demands(db, buyer_id)
 
     return BuyerDemandsResponse(
         success=True,
@@ -283,11 +297,9 @@ async def get_agent_claimed_demands(
     **Use case:**
     Agent tracks which buyer demands they've claimed and can follow up.
     """
-    demands = await demand_service.get_agent_claimed_demands_service(
-        db,
-        agent_id,
-        current_user
-    )
+    ensure_owner_or_admin(agent_id, current_user, "You are not authorized to view these demands")
+
+    demands = await demand_repo.get_agent_claimed_demands(db, agent_id)
 
     return AgentClaimedDemandsResponse(
         success=True,
@@ -329,17 +341,20 @@ async def update_demand_status(
     Use POST /demands/{id}/claim to change status from "active" to "assigned".
     This endpoint is for buyer/admin status updates.
     """
-    demand_dict = await demand_service.update_demand_status_service(
-        db,
-        demand_id,
-        status_data.status,
-        current_user
-    )
+    # Fetch demand and check authorization
+    demand_dict = await demand_repo.get_demand_by_id(db, demand_id)
+    if not demand_dict:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Demand not found")
+
+    ensure_owner_or_admin(demand_dict.buyer_id, current_user, "You are not authorized to update this demand")
+
+    await demand_repo.update_demand_status(db, demand_id, status_data.status)
+    updated_dict = await demand_repo.get_demand_by_id(db, demand_id)
 
     return DemandStatusUpdateResponse(
         success=True,
         message=f"Demand status updated to {status_data.status}",
-        demand=demand_dict
+        demand=updated_dict
     )
 
 
@@ -376,11 +391,14 @@ async def delete_demand(
     Once a demand is assigned, fulfilled, or closed, it's kept for history.
     This ensures agents' commitments are tracked and deals are recorded.
     """
-    await demand_service.delete_demand_service(
-        db,
-        demand_id,
-        current_user
-    )
+    # Fetch demand and check authorization
+    demand_dict = await demand_repo.get_demand_by_id(db, demand_id)
+    if not demand_dict:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Demand not found")
+
+    ensure_owner_or_admin(demand_dict.buyer_id, current_user, "You are not authorized to delete this demand")
+
+    await demand_repo.delete_demand(db, demand_id)
 
     return DemandDeleteResponse(
         success=True,

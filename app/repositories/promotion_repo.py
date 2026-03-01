@@ -11,10 +11,9 @@ Handles:
 
 import logging
 from typing import List, Optional
-from datetime import datetime, timedelta
-from decimal import Decimal
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, and_, or_, desc
+from sqlalchemy import select, update, and_, desc
 from sqlalchemy.orm import selectinload
 from fastapi import HTTPException, status
 import uuid
@@ -276,7 +275,7 @@ async def promote_listing(
         )
 
     # Calculate dates
-    start_date = datetime.now(datetime.now().astimezone().tzinfo)
+    start_date = datetime.now(timezone.utc)
     end_date = start_date + timedelta(days=duration_days)
 
     # If upgrading from existing promotion, mark old promotion as expired
@@ -462,7 +461,7 @@ async def expire_promotions(db: AsyncSession) -> int:
         >>> count = await expire_promotions(db)
         >>> print(f"Expired {count} promotions")
     """
-    now = datetime.now(datetime.now().astimezone().tzinfo)
+    now = datetime.now(timezone.utc)
 
     # Find expired promotions
     result = await db.execute(

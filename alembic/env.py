@@ -17,7 +17,7 @@ from app.db.base import Base
 from app.config import settings
 
 # Import all models so Alembic can detect them
-from app.models.user import User, AgentProfile, Session  # BuyerProfile removed
+from app.models.user import User, AgentProfile
 from app.models.token import EmailVerificationToken, PasswordResetToken, RefreshToken
 from app.models.listing import Listing, ListingImage
 from app.models.lead import Lead, SavedListing

@@ -153,7 +153,14 @@ async def update_user_basic_info(
     user.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
-    await db.refresh(user)
+
+    # Re-fetch with agent_profile loaded (db.refresh doesn't load relationships)
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.agent_profile))
+        .where(User.id == user_id)
+    )
+    user = result.scalar_one()
 
     logger.info(f"Updated user basic info: {user_id}")
     return user

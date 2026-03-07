@@ -68,7 +68,7 @@ class Listing(Base):
     # Using Numeric for precise decimal values
     asking_price_eur = Column(Numeric(precision=12, scale=2), nullable=False, index=True)
     monthly_revenue_eur = Column(Numeric(precision=12, scale=2), nullable=True, index=True)
-    roi = Column(Numeric(precision=5, scale=2), nullable=True, index=True)  # Auto-calculated
+    roi = Column(Numeric(precision=10, scale=2), nullable=True, index=True)  # Auto-calculated
 
     # ========================================================================
     # BUSINESS DETAILS

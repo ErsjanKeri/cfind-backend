@@ -67,8 +67,8 @@ class ListingCreate(BaseModel):
     # ========================================================================
     # FINANCIALS (EUR only)
     # ========================================================================
-    asking_price_eur: Decimal = Field(..., gt=0)
-    monthly_revenue_eur: Optional[Decimal] = Field(None, ge=0)
+    asking_price_eur: Decimal = Field(..., gt=0, max_digits=12, decimal_places=2)
+    monthly_revenue_eur: Optional[Decimal] = Field(None, ge=0, max_digits=12, decimal_places=2)
 
     # ========================================================================
     # BUSINESS DETAILS
@@ -138,8 +138,8 @@ class ListingUpdate(BaseModel):
     public_location_area: Optional[str] = Field(None, max_length=100)
 
     # Financials
-    asking_price_eur: Optional[Decimal] = Field(None, gt=0)
-    monthly_revenue_eur: Optional[Decimal] = Field(None, ge=0)
+    asking_price_eur: Optional[Decimal] = Field(None, gt=0, max_digits=12, decimal_places=2)
+    monthly_revenue_eur: Optional[Decimal] = Field(None, ge=0, max_digits=12, decimal_places=2)
 
     # Business details
     employee_count: Optional[int] = Field(None, ge=0)

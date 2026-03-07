@@ -297,6 +297,7 @@ async def get_all_users(
         item = UserListItem.model_validate(user)
         if user.agent_profile:
             item = item.model_copy(update={
+                "operating_country": user.agent_profile.operating_country,
                 "verification_status": user.agent_profile.verification_status,
                 "credit_balance": user.agent_profile.credit_balance,
                 "license_number": user.agent_profile.license_number,
@@ -321,6 +322,7 @@ async def admin_create_agent(
     name: str,
     email: str,
     password: str,
+    operating_country: str,
     company_name: str,
     license_number: str,
     phone: str,
@@ -376,6 +378,7 @@ async def admin_create_agent(
     # Create agent profile (agent-specific fields only)
     agent_profile = AgentProfile(
         user_id=user.id,
+        operating_country=operating_country,
         license_number=license_number,
         whatsapp_number=whatsapp,
         bio_en=bio_en,

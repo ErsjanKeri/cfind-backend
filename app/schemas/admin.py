@@ -46,6 +46,7 @@ class AdminCreateAgentRequest(BaseModel):
     password: str = Field(..., min_length=8, max_length=100)
 
     # Agent-specific fields
+    operating_country: str = Field(..., min_length=2, max_length=2)
     company_name: str = Field(..., min_length=2, max_length=200)
     license_number: str = Field(..., min_length=2, max_length=100)
     phone: str = Field(..., min_length=8, max_length=20)
@@ -62,6 +63,7 @@ class AdminCreateAgentRequest(BaseModel):
                 "name": "New Agent",
                 "email": "newagent@example.com",
                 "password": "SecurePass123",
+                "operating_country": "al",
                 "company_name": "New Agency",
                 "license_number": "LIC-2024-999",
                 "phone": "+355691111111",
@@ -187,6 +189,7 @@ class UserListItem(BaseSchema):
     created_at: datetime
 
     # Agent-specific (if role = agent)
+    operating_country: Optional[str] = None
     verification_status: Optional[str] = None
     credit_balance: Optional[int] = None
     license_number: Optional[str] = None

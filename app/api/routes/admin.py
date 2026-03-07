@@ -15,7 +15,7 @@ Endpoints:
 
 import logging
 from typing import Annotated, Optional
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -40,6 +40,7 @@ from app.repositories import admin_repo
 from app.repositories.user_repo import get_user_by_id
 from app.services.email_service import send_agent_rejection_email
 from app.repositories import promotion_repo
+from app.core.constants import VALID_COUNTRY_CODES
 
 logger = logging.getLogger(__name__)
 
@@ -247,11 +248,18 @@ async def create_agent(
     **Use case:**
     Admin creates agent account and can immediately approve them.
     """
+    if agent_data.operating_country not in VALID_COUNTRY_CODES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid operating country. Must be one of: {', '.join(VALID_COUNTRY_CODES)}"
+        )
+
     user = await admin_repo.admin_create_agent(
         db,
         agent_data.name,
         agent_data.email,
         agent_data.password,
+        agent_data.operating_country,
         agent_data.company_name,
         agent_data.license_number,
         agent_data.phone,

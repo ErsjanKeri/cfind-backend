@@ -4,7 +4,9 @@
       "Bash(python:*)",
       "Bash(python3:*)",
       "Bash(source:*)",
-      "Bash(./venv/bin/python3:*)"
+      "Bash(./venv/bin/python3:*)",
+      "mcp__digitalocean__apps-list",
+      "mcp__digitalocean__apps-get-deployment-status"
     ]
   }
 }

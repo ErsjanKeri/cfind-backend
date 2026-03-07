@@ -300,10 +300,6 @@ async def update_listing(
 
     ensure_owner_or_admin(listing.agent_id, current_user, "You are not authorized to update this listing")
 
-    # Admin-only field
-    if update_data.is_physically_verified is not None and current_user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can set physical verification status")
-
     # Update and return private view
     updated_listing = await listing_repo.update_listing(db, listing_id, update_data)
     agent_refreshed = await get_user_by_id(db, str(updated_listing.agent_id), include_profiles=True)

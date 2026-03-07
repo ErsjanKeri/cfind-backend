@@ -38,6 +38,7 @@ from app.api.deps import (
 from app.repositories import demand_repo
 from app.services.email_service import send_demand_claimed_email
 from app.core.exceptions import DemandAlreadyClaimedException
+from app.core.constants import VALID_COUNTRY_CODES
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,12 @@ async def create_demand(
 
     **Returns:** Created demand
     """
+    if demand_data.country_code not in VALID_COUNTRY_CODES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid country code. Must be one of: {', '.join(VALID_COUNTRY_CODES)}"
+        )
+
     demand = await demand_repo.create_demand(db, str(current_user.id), demand_data)
     demand_dict = await demand_repo.get_demand_by_id(db, str(demand.id))
 
@@ -104,6 +111,8 @@ async def create_demand(
 async def get_active_demands(
     current_user: Annotated[User, Depends(get_verified_agent)],
     db: AsyncSession = Depends(get_db),
+    # Country (required)
+    country_code: str = Query(..., min_length=2, max_length=2, description="Country code (e.g. al, ae)"),
     # Filters
     category: Optional[str] = Query(None, description="Business category"),
     city: Optional[str] = Query(None, description="Preferred city"),
@@ -136,6 +145,7 @@ async def get_active_demands(
     """
     # Build search params
     search_params = DemandSearchParams(
+        country_code=country_code,
         category=category,
         city=city,
         min_budget_eur=Decimal(min_budget_eur) if min_budget_eur else None,

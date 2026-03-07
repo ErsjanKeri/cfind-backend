@@ -22,6 +22,7 @@ from app.schemas.listing import (
     ListingDeleteResponse,
     ListingPublic, ListingPrivate,
     ListingSearchParams, ListingSearchResponse,
+    ListingGetResponse,
     AgentListingsResponse
 )
 from app.api.deps import (
@@ -33,6 +34,7 @@ from app.api.deps import (
 )
 from app.repositories import listing_repo
 from app.repositories.user_repo import get_user_by_id
+from app.core.constants import VALID_COUNTRY_CODES
 
 # Initialize router
 router = APIRouter(prefix="/listings", tags=["Listings"])
@@ -49,6 +51,9 @@ router = APIRouter(prefix="/listings", tags=["Listings"])
     description="Search and filter public listings with pagination"
 )
 async def search_listings(
+    # Country (required)
+    country_code: str = Query(..., min_length=2, max_length=2, description="Country code (e.g. al, ae)"),
+
     # Filters
     category: Optional[str] = Query(None, description="Business category"),
     city: Optional[str] = Query(None, description="City name"),
@@ -104,6 +109,7 @@ async def search_listings(
     """
     # Build search params
     search_params = ListingSearchParams(
+        country_code=country_code,
         category=category,
         city=city,
         area=area,
@@ -138,6 +144,7 @@ async def search_listings(
 
 @router.get(
     "/{listing_id}",
+    response_model=ListingGetResponse,
     summary="Get listing by ID",
     description="Get single listing (public view for anonymous, private view for owner/admin)"
 )
@@ -170,10 +177,10 @@ async def get_listing(
     else:
         listing_dict = listing_repo.transform_public_listing(listing, agent)
 
-    return {
-        "success": True,
-        "listing": listing_dict
-    }
+    return ListingGetResponse(
+        success=True,
+        listing=listing_dict
+    )
 
 
 # ============================================================================
@@ -219,6 +226,22 @@ async def create_listing(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid agent ID")
     else:
         agent_id = str(current_user.id)
+
+    # Validate country matches agent's operating country (skip for admins)
+    if current_user.role != "admin":
+        agent_profile = current_user.agent_profile
+        if agent_profile and agent_profile.operating_country and listing_data.country_code != agent_profile.operating_country:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Listing country must match your operating country ({agent_profile.operating_country})"
+            )
+
+    # Validate country code
+    if listing_data.country_code not in VALID_COUNTRY_CODES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid country code. Must be one of: {', '.join(VALID_COUNTRY_CODES)}"
+        )
 
     # Validate images
     if not listing_data.images or len(listing_data.images) == 0:

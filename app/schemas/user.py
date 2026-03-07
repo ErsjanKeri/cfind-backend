@@ -15,6 +15,7 @@ class AgentProfileResponse(BaseSchema):
     """Agent profile response schema."""
 
     user_id: str
+    operating_country: Optional[str] = None
     license_number: Optional[str] = None
     whatsapp_number: Optional[str] = None
     bio_en: Optional[str] = None
@@ -50,6 +51,7 @@ class UserResponse(BaseSchema):
     email_verified: bool
     image: Optional[str] = None
     role: str  # "buyer" | "agent" | "admin"
+    country_preference: Optional[str] = None
 
     # Common fields (for both buyers and agents)
     phone_number: Optional[str] = None
@@ -75,6 +77,7 @@ class UserProfileUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=100)
     email: Optional[EmailStr] = None
     image: Optional[str] = None  # URL to profile image
+    country_preference: Optional[str] = Field(None, min_length=2, max_length=2)
 
     # Common fields for both buyers and agents
     phone_number: Optional[str] = Field(None, min_length=8, max_length=20)
@@ -86,6 +89,7 @@ class UserProfileUpdate(BaseModel):
             "example": {
                 "name": "John Doe Updated",
                 "email": "john.updated@example.com",
+                "country_preference": "al",
                 "phone_number": "+355691234567",
                 "company_name": "My Business Ltd",
                 "website": "https://mybusiness.com"

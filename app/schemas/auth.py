@@ -1,7 +1,6 @@
 """Pydantic schemas for authentication endpoints."""
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from typing import Optional
 
 from app.schemas.base import BaseSchema
 from app.schemas.user import UserResponse
@@ -11,53 +10,6 @@ from app.core.security import validate_password_strength
 # ============================================================================
 # REGISTRATION
 # ============================================================================
-
-class RegisterRequest(BaseModel):
-    """Request schema for user registration."""
-
-    name: str = Field(..., min_length=2, max_length=100)
-    email: EmailStr
-    password: str = Field(..., min_length=8, max_length=100)
-    role: str = Field(..., pattern="^(buyer|agent)$")
-
-    # Common fields (for both buyers and agents)
-    phone: Optional[str] = Field(None, min_length=8, max_length=20)
-    company_name: Optional[str] = Field(None, min_length=2, max_length=200)
-
-    # Agent-specific fields (required if role = "agent")
-    license_number: Optional[str] = Field(None, min_length=2, max_length=100)
-    whatsapp: Optional[str] = Field(None, min_length=8, max_length=20)
-    bio_en: Optional[str] = Field(None, max_length=1000)
-
-    # Document URLs (required for agent registration)
-    license_document_url: Optional[str] = None
-    company_document_url: Optional[str] = None
-    id_document_url: Optional[str] = None
-
-    @field_validator("password")
-    @classmethod
-    def validate_password(cls, v: str) -> str:
-        return validate_password_strength(v)
-
-    @field_validator("role")
-    @classmethod
-    def validate_agent_fields(cls, v: str, values) -> str:
-        """Validate that agent-specific fields are provided if role is agent."""
-        # Note: In Pydantic v2, we need to use 'info.data' to access other fields
-        # This is a simplified version - full validation happens in the route
-        return v
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "name": "John Doe",
-                "email": "john@example.com",
-                "password": "SecurePass123",
-                "role": "buyer"
-            }
-        }
-    }
-
 
 class RegisterResponse(BaseSchema):
     """Response schema for successful registration."""
@@ -208,21 +160,3 @@ class RefreshTokenResponse(BaseSchema):
 
     success: bool = True
     message: str = "Access token refreshed successfully"
-
-
-# ============================================================================
-# COMMON ERROR RESPONSE
-# ============================================================================
-
-class ErrorResponse(BaseSchema):
-    """Standard error response schema."""
-
-    detail: str
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "detail": "Invalid credentials"
-            }
-        }
-    }

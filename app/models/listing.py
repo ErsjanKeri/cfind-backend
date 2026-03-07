@@ -31,6 +31,7 @@ class Listing(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     agent_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    country_code = Column(String(2), ForeignKey("countries.code"), nullable=False, default="al", index=True)
 
     # Status: "draft" | "active" | "sold" | "inactive"
     status = Column(String, default="draft", nullable=False, index=True)

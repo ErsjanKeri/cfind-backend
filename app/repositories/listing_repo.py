@@ -98,6 +98,7 @@ async def create_listing(
     listing = Listing(
         id=uuid.uuid4(),
         agent_id=agent_id,
+        country_code=listing_data.country_code,
         status=listing_data.status or "active",
 
         # Public info
@@ -241,11 +242,14 @@ async def get_listings(
     # ========================================================================
     # VISIBILITY RULES (public mode)
     # ========================================================================
+    # Always filter by country
+    query = query.where(Listing.country_code == search_params.country_code)
+
     if mode == "public":
         query = query.where(
             and_(
-                Listing.status == "active",  # Only active listings
-                AgentProfile.verification_status == "approved"  # Only from verified agents
+                Listing.status == "active",
+                AgentProfile.verification_status == "approved"
             )
         )
 

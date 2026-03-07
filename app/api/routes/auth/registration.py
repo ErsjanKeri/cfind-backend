@@ -22,6 +22,7 @@ from app.schemas.auth import RegisterResponse
 from app.core.security import hash_password, generate_secure_token, validate_password_strength
 from app.services.email_service import send_verification_email
 from app.services.upload_service import upload_document_direct
+from app.core.constants import VALID_COUNTRY_CODES
 
 limiter = Limiter(key_func=get_remote_address)
 router = APIRouter()
@@ -46,6 +47,7 @@ async def register(
     phone: Optional[str] = Form(None),
     company_name: Optional[str] = Form(None),
     # Agent-specific fields
+    operating_country: Optional[str] = Form(None),
     license_number: Optional[str] = Form(None),
     whatsapp: Optional[str] = Form(None),
     bio_en: Optional[str] = Form(None),
@@ -103,6 +105,11 @@ async def register(
 
     # Validate agent-specific fields
     if role == "agent":
+        if not operating_country or operating_country not in VALID_COUNTRY_CODES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Operating country is required for agent registration. Must be one of: {', '.join(VALID_COUNTRY_CODES)}"
+            )
         if not company_name:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -139,33 +146,30 @@ async def register(
                 detail="ID/Passport document is required for agent registration"
             )
 
+    # Generate user ID upfront so S3 paths match the actual user
+    user_id = uuid.uuid4()
+
     # Upload documents to S3 for agents (BEFORE creating user)
     license_document_url = None
     company_document_url = None
     id_document_url = None
 
     if role == "agent":
-        # Generate temporary user_id for document upload path
-        temp_user_id = str(uuid.uuid4())
-
-        # Upload license document
         license_document_url = await upload_document_direct(
             file=license_document,
-            user_id=temp_user_id,
+            user_id=str(user_id),
             document_type="license"
         )
 
-        # Upload company document
         company_document_url = await upload_document_direct(
             file=company_document,
-            user_id=temp_user_id,
+            user_id=str(user_id),
             document_type="company"
         )
 
-        # Upload ID document
         id_document_url = await upload_document_direct(
             file=id_document,
-            user_id=temp_user_id,
+            user_id=str(user_id),
             document_type="id"
         )
 
@@ -174,7 +178,7 @@ async def register(
 
     # Create user
     user = User(
-        id=uuid.uuid4(),
+        id=user_id,
         name=name,
         email=email,
         password=hashed_password,
@@ -191,6 +195,7 @@ async def register(
     if role == "agent":
         agent_profile = AgentProfile(
             user_id=user.id,
+            operating_country=operating_country,
             license_number=license_number,
             whatsapp_number=whatsapp,
             bio_en=bio_en,
@@ -201,8 +206,6 @@ async def register(
             submitted_at=datetime.now(timezone.utc)
         )
         db.add(agent_profile)
-    elif role == "buyer":
-        pass
 
     # Generate email verification token (24-hour validity)
     token = generate_secure_token()

@@ -13,7 +13,7 @@ import logging
 from typing import Optional, List, Tuple
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, and_, desc
+from sqlalchemy import select, update, delete, and_, desc, func
 from sqlalchemy.orm import selectinload
 from fastapi import HTTPException, status
 import uuid
@@ -76,6 +76,7 @@ async def create_demand(
     demand = BuyerDemand(
         id=uuid.uuid4(),
         buyer_id=buyer_id,
+        country_code=demand_data.country_code,
         budget_min_eur=demand_data.budget_min_eur,
         budget_max_eur=demand_data.budget_max_eur,
         category=demand_data.category,
@@ -132,6 +133,7 @@ async def get_active_demands(
             selectinload(BuyerDemand.buyer)  # Just load buyer, no profile
         )
         .where(BuyerDemand.status == "active")
+        .where(BuyerDemand.country_code == search_params.country_code)
     )
 
     # ========================================================================
@@ -165,7 +167,6 @@ async def get_active_demands(
     # ========================================================================
     # COUNT TOTAL (before pagination)
     # ========================================================================
-    from sqlalchemy import func
     count_query = select(func.count()).select_from(query.subquery())
     total_result = await db.execute(count_query)
     total = total_result.scalar()

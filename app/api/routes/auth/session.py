@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.exceptions import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
+from jose import JWTError
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -32,6 +33,7 @@ from app.core.security import (
 )
 from app.core.exceptions import EmailNotVerifiedException, InvalidCredentialsException
 from app.api.deps import get_current_user, verify_csrf_token
+from app.repositories.user_repo import get_user_by_email
 from app.config import settings
 
 limiter = Limiter(key_func=get_remote_address)
@@ -126,10 +128,7 @@ async def login(
     Email verification is strictly enforced.
     """
     # Find user
-    result = await db.execute(
-        select(User).where(User.email == credentials.email)
-    )
-    user = result.scalar_one_or_none()
+    user = await get_user_by_email(db, credentials.email)
 
     if not user or not user.password:
         raise InvalidCredentialsException()
@@ -286,7 +285,7 @@ async def refresh_token(
             message="Access token refreshed successfully"
         )
 
-    except Exception:
+    except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid refresh token. Please log in again."

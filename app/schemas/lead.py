@@ -10,6 +10,7 @@ Handles:
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
+from decimal import Decimal
 
 from app.schemas.base import BaseSchema
 from app.schemas.listing import ListingPublic
@@ -65,7 +66,7 @@ class AgentLead(BaseSchema):
     id: str
     listing_id: str
     listing_title: str
-    listing_asking_price_eur: float
+    listing_asking_price_eur: Decimal
     buyer_id: str
     buyer_name: str
     buyer_email: str
@@ -92,10 +93,10 @@ class BuyerLead(BaseSchema):
     id: str
     listing_id: str
     listing_title: str
-    listing_asking_price_eur: float
+    listing_asking_price_eur: Decimal
     agent_id: str
     agent_name: str
-    agent_agency: Optional[str] = None
+    agent_agency_name: Optional[str] = None
     agent_email: str
     agent_phone: Optional[str] = None
     agent_whatsapp: Optional[str] = None

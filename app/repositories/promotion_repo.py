@@ -367,24 +367,10 @@ async def cancel_promotion(
         .values(status="cancelled")
     )
 
-    # Check if there are other active promotions
-    result = await db.execute(
-        select(PromotionHistory)
-        .where(
-            and_(
-                PromotionHistory.listing_id == listing_id,
-                PromotionHistory.status == "active"
-            )
-        )
-    )
-
-    other_active_promotions = result.scalars().all()
-
-    if not other_active_promotions:
-        # No other active promotions, reset to standard
-        listing.promotion_tier = "standard"
-        listing.promotion_start_date = None
-        listing.promotion_end_date = None
+    # Reset listing to standard tier
+    listing.promotion_tier = "standard"
+    listing.promotion_start_date = None
+    listing.promotion_end_date = None
 
     await db.commit()
     await db.refresh(listing)

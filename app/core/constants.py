@@ -126,18 +126,39 @@ BUSINESS_CATEGORIES = [
 
 
 # ============================================================================
-# ALBANIAN CITIES
+# COUNTRIES & CITIES
 # ============================================================================
 
-ALBANIAN_CITIES = [
-    "Tirana",
-    "Durrës",
-    "Vlorë",
-    "Shkodër",
-    "Elbasan",
-    "Fier",
-    "Korçë",
-    "Berat",
-    "Sarandë",
-    "Gjirokastër",
-]
+VALID_COUNTRY_CODES = ["al", "ae"]
+
+COUNTRY_DATA = {
+    "al": {
+        "name": "Albania",
+        "cities": {
+            "Tirana": ["Blloku", "Komuna e Parisit", "Astir", "Ish-Blloku", "Qendër", "Laprakë", "Don Bosko",
+                        "21 Dhjetori", "Medreseja", "Selitë"],
+            "Durrës": ["Plazh", "Qendër", "Shkozet", "Spitallë", "Currila"],
+            "Vlorë": ["Lungomare", "Qendër", "Uji i Ftohtë", "Skelë"],
+            "Sarandë": ["Qendër", "Mango"],
+            "Shkodër": ["Qendër"],
+            "Elbasan": ["Qendër"],
+            "Korçë": ["Qendër"],
+            "Fier": ["Qendër"],
+            "Berat": ["Qendër", "Mangalem", "Goricë"],
+            "Gjirokastër": ["Qendër"],
+        },
+    },
+    "ae": {
+        "name": "United Arab Emirates",
+        "cities": {
+            "Dubai": ["Downtown", "Marina", "JBR", "Business Bay", "DIFC", "Deira", "Jumeirah", "Al Barsha",
+                       "JLT", "Silicon Oasis", "International City", "Al Quoz"],
+            "Abu Dhabi": ["Corniche", "Al Reem Island", "Saadiyat Island", "Yas Island", "Khalifa City",
+                           "Al Maryah Island"],
+            "Sharjah": ["Al Majaz", "Al Nahda", "Al Qasimia", "Industrial Area"],
+            "Ajman": ["Al Nuaimiya", "Al Rashidiya", "Emirates City"],
+            "Ras Al Khaimah": ["Al Hamra", "Al Nakheel", "Corniche"],
+            "Fujairah": ["City Centre", "Al Faseel"],
+        },
+    },
+}

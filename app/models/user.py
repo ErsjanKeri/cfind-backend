@@ -26,6 +26,7 @@ class User(Base):
     image = Column(String, nullable=True)
     password = Column(String, nullable=True)
     role = Column(String, default="buyer", nullable=False)
+    country_preference = Column(String(2), ForeignKey("countries.code"), nullable=True)
 
     # Common fields for both buyers and agents
     phone_number = Column(String, nullable=True)  # Contact phone
@@ -78,6 +79,7 @@ class AgentProfile(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
 
     # Agent-specific fields (phone, company_name moved to User table!)
+    operating_country = Column(String(2), ForeignKey("countries.code"), nullable=True)
     license_number = Column(String, nullable=True)  # Business license number
     whatsapp_number = Column(String, nullable=True)  # WhatsApp for business
     bio_en = Column(String, nullable=True)  # Agent bio/description

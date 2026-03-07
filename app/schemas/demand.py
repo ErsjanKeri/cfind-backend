@@ -27,6 +27,8 @@ class DemandCreate(BaseModel):
     - Demand type (investor or seeking_funding)
     """
 
+    country_code: str = Field(..., min_length=2, max_length=2)
+
     # Budget (EUR only)
     budget_min_eur: Decimal = Field(..., gt=0, description="Minimum budget in EUR")
     budget_max_eur: Decimal = Field(..., gt=0, description="Maximum budget in EUR")
@@ -107,13 +109,14 @@ class DemandResponse(BaseSchema):
 
     id: str
     buyer_id: str
+    country_code: str
     buyer_name: Optional[str] = None
     buyer_email: Optional[str] = None
     buyer_company: Optional[str] = None
 
     # Budget
-    budget_min_eur: float
-    budget_max_eur: float
+    budget_min_eur: Decimal
+    budget_max_eur: Decimal
 
     # Category & Location
     category: str
@@ -146,6 +149,8 @@ class DemandResponse(BaseSchema):
 
 class DemandSearchParams(BaseModel):
     """Search and filter parameters for active demands."""
+
+    country_code: str = Field(..., min_length=2, max_length=2)
 
     # Filters
     category: Optional[str] = None

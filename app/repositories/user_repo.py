@@ -21,6 +21,7 @@ from app.schemas.user import (
     UserProfileUpdate, AgentProfileUpdate,
     AgentVerificationStatus, DocumentsCompletionStatus,
 )
+from app.core.constants import VALID_COUNTRY_CODES
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +150,14 @@ async def update_user_basic_info(
 
     if update_data.website is not None:
         user.website = update_data.website
+
+    if update_data.country_preference is not None:
+        if update_data.country_preference not in VALID_COUNTRY_CODES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid country code. Must be one of: {', '.join(VALID_COUNTRY_CODES)}"
+            )
+        user.country_preference = update_data.country_preference
 
     user.updated_at = datetime.now(timezone.utc)
 

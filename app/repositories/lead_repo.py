@@ -20,6 +20,7 @@ from app.models.lead import Lead, SavedListing
 from app.models.listing import Listing
 from app.models.user import User, AgentProfile
 from app.schemas.lead import AgentLead, BuyerLead, SavedListingItem
+from app.repositories.listing_repo import transform_public_listing
 
 logger = logging.getLogger(__name__)
 
@@ -225,7 +226,7 @@ async def get_buyer_leads(
             listing_asking_price_eur=lead.listing.asking_price_eur,
             agent_id=lead.agent_id,
             agent_name=lead.agent.name,
-            agent_agency=lead.agent.company_name,
+            agent_agency_name=lead.agent.company_name,
             agent_email=lead.agent.email,
             agent_phone=lead.agent.phone_number,
             agent_whatsapp=lead.agent.agent_profile.whatsapp_number if lead.agent.agent_profile else None,
@@ -325,9 +326,6 @@ async def get_saved_listings(
 
     rows = result.all()
 
-    # Import transform function
-    from app.repositories.listing_repo import transform_public_listing
-
     # Transform to public view + add saved_at
     listings_list = []
     for saved_listing, listing, agent in rows:
@@ -340,32 +338,3 @@ async def get_saved_listings(
 
     logger.info(f"Fetched {len(listings_list)} saved listings for buyer {buyer_id}")
     return listings_list
-
-
-async def check_listing_is_saved(
-    db: AsyncSession,
-    buyer_id: str,
-    listing_id: str
-) -> bool:
-    """
-    Check if listing is saved by buyer.
-
-    Args:
-        db: Database session
-        buyer_id: Buyer UUID
-        listing_id: Listing UUID
-
-    Returns:
-        True if saved, False otherwise
-    """
-    result = await db.execute(
-        select(SavedListing)
-        .where(
-            and_(
-                SavedListing.buyer_id == buyer_id,
-                SavedListing.listing_id == listing_id
-            )
-        )
-    )
-
-    return result.scalar_one_or_none() is not None

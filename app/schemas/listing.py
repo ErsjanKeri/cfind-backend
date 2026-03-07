@@ -1,7 +1,7 @@
 """Pydantic schemas for listing operations."""
 
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Union
 from datetime import datetime
 from decimal import Decimal
 
@@ -47,9 +47,8 @@ class ListingCreate(BaseModel):
     - Real description, coordinates
     """
 
-    # ========================================================================
-    # PRIVATE INFORMATION (owner/admin only)
-    # ========================================================================
+    country_code: str = Field(..., min_length=2, max_length=2)
+
     real_business_name: str = Field(..., min_length=2, max_length=200)
     real_location_address: str = Field(..., min_length=5, max_length=500)
     real_location_lat: Optional[float] = Field(None, ge=-90, le=90)
@@ -165,6 +164,7 @@ class _ListingBase(BaseSchema):
 
     id: str
     agent_id: str
+    country_code: str
     status: str
 
     # Promotion
@@ -180,9 +180,9 @@ class _ListingBase(BaseSchema):
     public_location_area: Optional[str] = None
 
     # Financials
-    asking_price_eur: float
-    monthly_revenue_eur: Optional[float] = None
-    roi: Optional[float] = None
+    asking_price_eur: Decimal
+    monthly_revenue_eur: Optional[Decimal] = None
+    roi: Optional[Decimal] = None
 
     # Business details
     employee_count: Optional[int] = None
@@ -235,6 +235,8 @@ class ListingPrivate(_ListingBase):
 class ListingSearchParams(BaseModel):
     """Search and filter parameters for listings."""
 
+    country_code: str = Field(..., min_length=2, max_length=2)
+
     # Filters
     category: Optional[str] = None
     city: Optional[str] = None
@@ -261,6 +263,13 @@ class ListingSearchParams(BaseModel):
 
     # Filter by verified agents only (default: true)
     verified_agents_only: bool = True
+
+
+class ListingGetResponse(BaseSchema):
+    """Response for getting a single listing (public or private view)."""
+
+    success: bool = True
+    listing: Union[ListingPrivate, ListingPublic]
 
 
 class ListingSearchResponse(BaseSchema):

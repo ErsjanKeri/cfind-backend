@@ -37,6 +37,7 @@ class BuyerDemand(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     buyer_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    country_code = Column(String(2), ForeignKey("countries.code"), nullable=False, default="al", index=True)
 
     # ========================================================================
     # BUDGET (EUR only)

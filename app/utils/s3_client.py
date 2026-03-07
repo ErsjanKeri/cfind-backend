@@ -28,24 +28,23 @@ logger = logging.getLogger(__name__)
 # S3 CLIENT INITIALIZATION
 # ============================================================================
 
+_s3_client = None
+
+
 def get_s3_client():
     """
     Get boto3 S3 client configured for AWS S3 or DigitalOcean Spaces.
-
-    Returns:
-        boto3.client: Configured S3 client
-
-    Example:
-        s3 = get_s3_client()
-        s3.upload_fileobj(file, bucket, key)
+    Returns a cached singleton instance.
     """
-    # Base configuration
+    global _s3_client
+    if _s3_client is not None:
+        return _s3_client
+
     config = Config(
         signature_version='s3v4',
         s3={'addressing_style': 'virtual'}
     )
 
-    # Create S3 client
     client_kwargs = {
         'service_name': 's3',
         'region_name': settings.AWS_REGION,
@@ -54,12 +53,11 @@ def get_s3_client():
         'config': config
     }
 
-    # Add endpoint URL for DigitalOcean Spaces
     if settings.AWS_ENDPOINT:
         client_kwargs['endpoint_url'] = settings.AWS_ENDPOINT
-        logger.info(f"Using custom S3 endpoint: {settings.AWS_ENDPOINT}")
 
-    return boto3.client(**client_kwargs)
+    _s3_client = boto3.client(**client_kwargs)
+    return _s3_client
 
 
 # ============================================================================
@@ -70,7 +68,8 @@ def generate_presigned_post(
     key: str,
     content_type: str,
     max_file_size: int = 10 * 1024 * 1024,  # 10 MB default
-    expiration: int = 3600  # 1 hour default
+    expiration: int = 3600,  # 1 hour default
+    acl: str = "public-read"
 ) -> Dict[str, Any]:
     """
     Generate presigned POST URL for direct client-side upload to S3.
@@ -108,11 +107,11 @@ def generate_presigned_post(
             Key=key,
             Fields={
                 'Content-Type': content_type,
-                'acl': 'public-read'  # Make uploaded files publicly accessible
+                'acl': acl,
             },
             Conditions=[
                 {'Content-Type': content_type},
-                {'acl': 'public-read'},
+                {'acl': acl},
                 ['content-length-range', 0, max_file_size]  # File size limit
             ],
             ExpiresIn=expiration
@@ -172,7 +171,8 @@ def upload_file(
     file_data: bytes,
     key: str,
     content_type: str,
-    metadata: Optional[Dict[str, str]] = None
+    metadata: Optional[Dict[str, str]] = None,
+    acl: str = "public-read"
 ) -> str:
     """
     Upload file directly to S3 from server.
@@ -211,7 +211,7 @@ def upload_file(
             'Key': key,
             'Body': file_data,
             'ContentType': content_type,
-            'ACL': 'public-read'  # Make file publicly accessible
+            'ACL': acl
         }
 
         # Add metadata if provided

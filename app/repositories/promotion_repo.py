@@ -467,26 +467,30 @@ async def expire_promotions(db: AsyncSession) -> int:
         logger.info("No promotions to expire")
         return 0
 
-    # Mark as expired
+    expired_ids = [p.id for p in expired_promotions]
+    expired_listing_ids = {p.listing_id for p in expired_promotions}
+
+    # Mark all as expired
     for promotion in expired_promotions:
         promotion.status = "expired"
 
-        # Check if listing has other active promotions
-        result = await db.execute(
-            select(PromotionHistory)
-            .where(
-                and_(
-                    PromotionHistory.listing_id == promotion.listing_id,
-                    PromotionHistory.status == "active",
-                    PromotionHistory.id != promotion.id
-                )
+    # Find listings that still have other active promotions (single query)
+    result = await db.execute(
+        select(PromotionHistory.listing_id)
+        .where(
+            and_(
+                PromotionHistory.listing_id.in_(expired_listing_ids),
+                PromotionHistory.status == "active",
+                PromotionHistory.id.not_in(expired_ids)
             )
         )
+        .distinct()
+    )
+    listings_with_active = {row[0] for row in result.all()}
 
-        other_active = result.scalars().all()
-
-        if not other_active and promotion.listing:
-            # No other active promotions, reset listing tier
+    # Reset tier for listings with no remaining active promotions
+    for promotion in expired_promotions:
+        if promotion.listing_id not in listings_with_active and promotion.listing:
             promotion.listing.promotion_tier = "standard"
             promotion.listing.promotion_start_date = None
             promotion.listing.promotion_end_date = None

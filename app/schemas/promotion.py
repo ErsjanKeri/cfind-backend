@@ -18,7 +18,7 @@ class CreditPackageResponse(BaseSchema):
     id: str
     name: str
     credits: int
-    price_eur: float
+    price_eur: Decimal
     is_popular: bool
     savings: Optional[str] = None
     is_active: bool

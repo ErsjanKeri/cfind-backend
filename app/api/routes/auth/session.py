@@ -7,6 +7,7 @@ Endpoints:
 - POST /logout - Revoke refresh token and clear cookies
 """
 
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
@@ -20,6 +21,8 @@ from slowapi.util import get_remote_address
 
 from app.db.session import get_db
 from app.models.user import User
+
+logger = logging.getLogger(__name__)
 from app.models.token import RefreshToken
 from app.schemas.auth import (
     LoginRequest, LoginResponse,
@@ -148,7 +151,7 @@ async def login(
         raise EmailNotVerifiedException()
 
     # Generate tokens
-    session_id = str(uuid.uuid4())
+    session_id = uuid.uuid4()
     csrf_token = generate_csrf_token()
 
     # Create access token
@@ -171,7 +174,7 @@ async def login(
 
     refresh_token_value, jti = create_refresh_token(
         subject=str(user.id),
-        session_id=session_id,
+        session_id=str(session_id),
         expires_delta=refresh_expires_delta
     )
 
@@ -180,7 +183,7 @@ async def login(
         id=uuid.uuid4(),
         user_id=user.id,
         jti=jti,
-        session_id=uuid.UUID(session_id),
+        session_id=session_id,
         expires_at=datetime.now(timezone.utc) + refresh_expires_delta,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent")
@@ -331,9 +334,8 @@ async def logout(
                 .values(revoked=True, revoked_at=datetime.now(timezone.utc))
             )
             await db.commit()
-        except Exception:
-            # Ignore errors during logout
-            pass
+        except Exception as e:
+            logger.warning(f"Error revoking refresh token during logout: {e}")
 
     # Clear cookies
     _clear_auth_cookies(response)

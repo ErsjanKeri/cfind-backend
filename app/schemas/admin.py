@@ -1,10 +1,11 @@
 """Pydantic schemas for admin operations."""
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List
 from datetime import datetime
 
 from app.schemas.base import BaseSchema
+from app.core.security import validate_password_strength
 
 
 # ============================================================================
@@ -45,6 +46,11 @@ class AdminCreateAgentRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=100)
 
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        return validate_password_strength(v)
+
     # Agent-specific fields
     operating_country: str = Field(..., min_length=2, max_length=2)
     company_name: str = Field(..., min_length=2, max_length=200)
@@ -81,6 +87,11 @@ class AdminCreateBuyerRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=100)
     company_name: Optional[str] = Field(None, max_length=200)
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        return validate_password_strength(v)
 
     # Admin can pre-verify
     email_verified: bool = Field(default=True)

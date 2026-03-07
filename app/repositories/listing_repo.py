@@ -182,7 +182,6 @@ async def get_listing_by_id(
     result = await db.execute(
         select(Listing, User)
         .join(User, Listing.agent_id == User.id)
-        .outerjoin(AgentProfile, User.id == AgentProfile.user_id)
         .options(
             selectinload(Listing.images),
             selectinload(User.agent_profile)

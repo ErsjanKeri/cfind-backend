@@ -209,15 +209,16 @@ async def generate_document_upload_url(
     # Generate unique S3 key
     key = generate_document_key(user_id, document_type, filename)
 
-    # Generate presigned POST
+    # Generate presigned POST (private ACL for sensitive documents)
     presigned = generate_presigned_post(
         key=key,
         content_type=content_type,
         max_file_size=MAX_DOCUMENT_SIZE,
-        expiration=3600  # 1 hour
+        expiration=3600,  # 1 hour
+        acl="private"
     )
 
-    # Get public URL
+    # Get public URL (admin will access via presigned GET)
     public_url = get_public_url(key)
 
     return {
@@ -343,7 +344,8 @@ async def upload_document_direct(
                 'user_id': user_id,
                 'document_type': document_type,
                 'original_filename': file.filename
-            }
+            },
+            acl="private"
         )
 
         logger.info(f"Document uploaded: {key}")

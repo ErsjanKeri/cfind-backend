@@ -7,7 +7,9 @@
       "Bash(./venv/bin/python3:*)",
       "mcp__digitalocean__apps-list",
       "mcp__digitalocean__apps-get-deployment-status",
-      "Bash(docker exec:*)"
+      "Bash(docker exec:*)",
+      "Bash(grep:*)",
+      "Bash(./venv/bin/python:*)"
     ]
   }
 }

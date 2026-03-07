@@ -79,6 +79,15 @@ class DemandUpdate(BaseModel):
     budget_min_eur: Optional[Decimal] = Field(None, gt=0)
     budget_max_eur: Optional[Decimal] = Field(None, gt=0)
 
+    @field_validator("budget_max_eur")
+    @classmethod
+    def validate_max_eur_greater_than_min(cls, v: Optional[Decimal], info) -> Optional[Decimal]:
+        """Validate max budget >= min budget when both are provided."""
+        if v is not None and "budget_min_eur" in info.data and info.data["budget_min_eur"] is not None:
+            if v < info.data["budget_min_eur"]:
+                raise ValueError("Maximum budget must be greater than or equal to minimum budget")
+        return v
+
     category: Optional[str] = Field(None, min_length=2, max_length=50)
     preferred_city_en: Optional[str] = Field(None, min_length=2, max_length=100)
     preferred_area: Optional[str] = Field(None, max_length=100)

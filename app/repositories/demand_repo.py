@@ -55,7 +55,7 @@ async def create_demand(
     db: AsyncSession,
     buyer_id: str,
     demand_data: DemandCreate
-) -> BuyerDemand:
+) -> DemandResponse:
     """
     Create new buyer demand.
 
@@ -67,11 +67,7 @@ async def create_demand(
         demand_data: Demand creation schema
 
     Returns:
-        Created demand object
-
-    Example:
-        >>> demand = await create_demand(db, buyer_id="123...", demand_data=data)
-        >>> print(demand.status)  # "active"
+        Created demand as DemandResponse
     """
     demand = BuyerDemand(
         id=uuid.uuid4(),
@@ -89,10 +85,17 @@ async def create_demand(
 
     db.add(demand)
     await db.commit()
-    await db.refresh(demand)
+
+    # Load buyer relationship for response
+    result = await db.execute(
+        select(BuyerDemand)
+        .options(selectinload(BuyerDemand.buyer))
+        .where(BuyerDemand.id == demand.id)
+    )
+    demand = result.scalar_one()
 
     logger.info(f"Created buyer demand: {demand.id} by buyer {buyer_id}")
-    return demand
+    return _transform_demand(demand)
 
 
 # ============================================================================
@@ -353,7 +356,7 @@ async def update_demand_status(
     db: AsyncSession,
     demand_id: str,
     new_status: str
-) -> BuyerDemand:
+) -> DemandResponse:
     """
     Update demand status.
 
@@ -362,19 +365,7 @@ async def update_demand_status(
     - assigned → fulfilled (buyer marks complete)
     - assigned → closed (buyer cancels)
     - active → closed (buyer cancels before assignment)
-
-    Args:
-        db: Database session
-        demand_id: Demand UUID
-        new_status: New status value
-
-    Returns:
-        Updated demand object
-
-    Raises:
-        HTTPException: If demand not found
     """
-    # Fetch demand
     result = await db.execute(
         select(BuyerDemand)
         .options(
@@ -391,7 +382,6 @@ async def update_demand_status(
             detail="Demand not found"
         )
 
-    # Update status
     demand.status = new_status
     demand.updated_at = datetime.now(timezone.utc)
 
@@ -399,7 +389,7 @@ async def update_demand_status(
     await db.refresh(demand)
 
     logger.info(f"Updated demand {demand_id} status to {new_status}")
-    return demand
+    return _transform_demand(demand)
 
 
 # ============================================================================

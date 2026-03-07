@@ -249,8 +249,9 @@ async def create_listing(
 
     # Create listing and return private view
     listing = await listing_repo.create_listing(db, agent_id, listing_data)
-    agent = await get_user_by_id(db, agent_id, include_profiles=True)
-    listing_dict = listing_repo.transform_private_listing(listing, agent)
+    # Use target_agent if admin created on behalf, otherwise current_user already has agent_profile
+    agent_for_response = target_agent if (current_user.role == "admin" and listing_data.agent_id) else current_user
+    listing_dict = listing_repo.transform_private_listing(listing, agent_for_response)
 
     return ListingCreateResponse(
         success=True,
@@ -300,10 +301,9 @@ async def update_listing(
 
     ensure_owner_or_admin(listing.agent_id, current_user, "You are not authorized to update this listing")
 
-    # Update and return private view
+    # Update and return private view (reuse agent from initial fetch)
     updated_listing = await listing_repo.update_listing(db, listing_id, update_data)
-    agent_refreshed = await get_user_by_id(db, str(updated_listing.agent_id), include_profiles=True)
-    listing_dict = listing_repo.transform_private_listing(updated_listing, agent_refreshed)
+    listing_dict = listing_repo.transform_private_listing(updated_listing, agent)
 
     return ListingUpdateResponse(
         success=True,

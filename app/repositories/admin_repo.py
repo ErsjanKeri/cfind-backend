@@ -136,98 +136,40 @@ async def reject_agent(
 # ============================================================================
 
 async def get_platform_stats(db: AsyncSession) -> PlatformStats:
-    """
-    Get platform-wide statistics.
+    """Get platform-wide statistics using batched queries (5 queries instead of 18)."""
 
-    Aggregates:
-    - Total users by role
-    - Agents by verification status
-    - Listings by status
-    - Total leads and demands
-    - Active promotions
-
-    Args:
-        db: Database session
-
-    Returns:
-        PlatformStats model
-    """
-    # Users count
-    total_users_result = await db.execute(select(func.count(User.id)))
-    total_users = total_users_result.scalar()
-
-    buyers_result = await db.execute(select(func.count(User.id)).where(User.role == "buyer"))
-    total_buyers = buyers_result.scalar()
-
-    agents_result = await db.execute(select(func.count(User.id)).where(User.role == "agent"))
-    total_agents = agents_result.scalar()
-
-    admins_result = await db.execute(select(func.count(User.id)).where(User.role == "admin"))
-    total_admins = admins_result.scalar()
-
-    # Agents by verification status
-    agents_pending_result = await db.execute(
-        select(func.count(AgentProfile.user_id)).where(AgentProfile.verification_status == "pending")
+    # Query 1: Users by role
+    user_counts = await db.execute(
+        select(User.role, func.count(User.id)).group_by(User.role)
     )
-    agents_pending = agents_pending_result.scalar()
+    user_map = dict(user_counts.all())
+    total_buyers = user_map.get("buyer", 0)
+    total_agents = user_map.get("agent", 0)
+    total_admins = user_map.get("admin", 0)
 
-    agents_approved_result = await db.execute(
-        select(func.count(AgentProfile.user_id)).where(AgentProfile.verification_status == "approved")
+    # Query 2: Agents by verification status
+    agent_counts = await db.execute(
+        select(AgentProfile.verification_status, func.count(AgentProfile.user_id))
+        .group_by(AgentProfile.verification_status)
     )
-    agents_approved = agents_approved_result.scalar()
+    agent_map = dict(agent_counts.all())
 
-    agents_rejected_result = await db.execute(
-        select(func.count(AgentProfile.user_id)).where(AgentProfile.verification_status == "rejected")
+    # Query 3: Listings by status
+    listing_counts = await db.execute(
+        select(Listing.status, func.count(Listing.id)).group_by(Listing.status)
     )
-    agents_rejected = agents_rejected_result.scalar()
+    listing_map = dict(listing_counts.all())
 
-    # Listings by status
-    total_listings_result = await db.execute(select(func.count(Listing.id)))
-    total_listings = total_listings_result.scalar()
-
-    active_listings_result = await db.execute(
-        select(func.count(Listing.id)).where(Listing.status == "active")
+    # Query 4: Demands by status + total leads
+    demand_counts = await db.execute(
+        select(BuyerDemand.status, func.count(BuyerDemand.id)).group_by(BuyerDemand.status)
     )
-    active_listings = active_listings_result.scalar()
+    demand_map = dict(demand_counts.all())
 
-    draft_listings_result = await db.execute(
-        select(func.count(Listing.id)).where(Listing.status == "draft")
-    )
-    draft_listings = draft_listings_result.scalar()
-
-    sold_listings_result = await db.execute(
-        select(func.count(Listing.id)).where(Listing.status == "sold")
-    )
-    sold_listings = sold_listings_result.scalar()
-
-    inactive_listings_result = await db.execute(
-        select(func.count(Listing.id)).where(Listing.status == "inactive")
-    )
-    inactive_listings = inactive_listings_result.scalar()
-
-    # Leads & Demands
     total_leads_result = await db.execute(select(func.count(Lead.id)))
     total_leads = total_leads_result.scalar()
 
-    total_demands_result = await db.execute(select(func.count(BuyerDemand.id)))
-    total_demands = total_demands_result.scalar()
-
-    active_demands_result = await db.execute(
-        select(func.count(BuyerDemand.id)).where(BuyerDemand.status == "active")
-    )
-    active_demands = active_demands_result.scalar()
-
-    assigned_demands_result = await db.execute(
-        select(func.count(BuyerDemand.id)).where(BuyerDemand.status == "assigned")
-    )
-    assigned_demands = assigned_demands_result.scalar()
-
-    fulfilled_demands_result = await db.execute(
-        select(func.count(BuyerDemand.id)).where(BuyerDemand.status == "fulfilled")
-    )
-    fulfilled_demands = fulfilled_demands_result.scalar()
-
-    # Promotions
+    # Query 5: Promotions
     active_promotions_result = await db.execute(
         select(func.count(PromotionHistory.id)).where(PromotionHistory.status == "active")
     )
@@ -237,23 +179,23 @@ async def get_platform_stats(db: AsyncSession) -> PlatformStats:
     total_credit_transactions = total_credit_txns_result.scalar()
 
     return PlatformStats(
-        total_users=total_users,
+        total_users=total_buyers + total_agents + total_admins,
         total_buyers=total_buyers,
         total_agents=total_agents,
         total_admins=total_admins,
-        agents_pending=agents_pending,
-        agents_approved=agents_approved,
-        agents_rejected=agents_rejected,
-        total_listings=total_listings,
-        active_listings=active_listings,
-        draft_listings=draft_listings,
-        sold_listings=sold_listings,
-        inactive_listings=inactive_listings,
+        agents_pending=agent_map.get("pending", 0),
+        agents_approved=agent_map.get("approved", 0),
+        agents_rejected=agent_map.get("rejected", 0),
+        total_listings=sum(listing_map.values()),
+        active_listings=listing_map.get("active", 0),
+        draft_listings=listing_map.get("draft", 0),
+        sold_listings=listing_map.get("sold", 0),
+        inactive_listings=listing_map.get("inactive", 0),
         total_leads=total_leads,
-        total_demands=total_demands,
-        active_demands=active_demands,
-        assigned_demands=assigned_demands,
-        fulfilled_demands=fulfilled_demands,
+        total_demands=sum(demand_map.values()),
+        active_demands=demand_map.get("active", 0),
+        assigned_demands=demand_map.get("assigned", 0),
+        fulfilled_demands=demand_map.get("fulfilled", 0),
         active_promotions=active_promotions,
         total_credit_transactions=total_credit_transactions
     )

@@ -89,12 +89,11 @@ async def create_demand(
         )
 
     demand = await demand_repo.create_demand(db, str(current_user.id), demand_data)
-    demand_dict = await demand_repo.get_demand_by_id(db, str(demand.id))
 
     return DemandCreateResponse(
         success=True,
         message="Demand created successfully. Verified agents can now view and claim it.",
-        demand=demand_dict
+        demand=demand
     )
 
 
@@ -358,13 +357,12 @@ async def update_demand_status(
 
     ensure_owner_or_admin(demand_dict.buyer_id, current_user, "You are not authorized to update this demand")
 
-    await demand_repo.update_demand_status(db, demand_id, status_data.status)
-    updated_dict = await demand_repo.get_demand_by_id(db, demand_id)
+    updated = await demand_repo.update_demand_status(db, demand_id, status_data.status)
 
     return DemandStatusUpdateResponse(
         success=True,
         message=f"Demand status updated to {status_data.status}",
-        demand=updated_dict
+        demand=updated
     )
 
 

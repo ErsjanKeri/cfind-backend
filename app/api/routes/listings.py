@@ -366,7 +366,7 @@ async def delete_listing(
 
     ensure_owner_or_admin(listing.agent_id, current_user, "You are not authorized to delete this listing")
 
-    await listing_repo.delete_listing(db, listing_id)
+    await listing_repo.delete_listing(db, listing_id, agent_id=str(listing.agent_id))
 
     return ListingDeleteResponse(
         success=True,
@@ -387,10 +387,12 @@ async def delete_listing(
 async def get_agent_listings(
     agent_id: str,
     current_user: Annotated[User, Depends(RoleChecker(["agent", "admin"]))],
+    page: int = Query(default=1, ge=1, description="Page number"),
+    limit: int = Query(default=20, ge=1, le=100, description="Items per page"),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get all listings for a specific agent.
+    Get listings for a specific agent with pagination.
 
     **Authorization:**
     - Agent can view their own listings (private view)
@@ -403,10 +405,14 @@ async def get_agent_listings(
     """
     ensure_owner_or_admin(agent_id, current_user, "You are not authorized to view these listings")
 
-    listings = await listing_repo.get_agent_listings(db, agent_id)
+    listings, total = await listing_repo.get_agent_listings(db, agent_id, page=page, limit=limit)
+    total_pages = (total + limit - 1) // limit
 
     return AgentListingsResponse(
         success=True,
-        total=len(listings),
+        total=total,
+        page=page,
+        limit=limit,
+        total_pages=total_pages,
         listings=listings
     )

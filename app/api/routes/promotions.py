@@ -16,12 +16,9 @@ import logging
 from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
 from app.db.session import get_db
 from app.models.user import User
-from app.models.listing import Listing
-from app.models.promotion import CreditPackage, PromotionTierConfig
 from app.schemas.promotion import (
     CreditPackageResponse, CreditPackagesResponse,
     PromotionTierConfigResponse, PromotionTierConfigsResponse,
@@ -37,7 +34,7 @@ from app.api.deps import (
     RoleChecker,
     ensure_owner_or_admin
 )
-from app.repositories import promotion_repo
+from app.repositories import promotion_repo, listing_repo
 from app.core.exceptions import InsufficientCreditsException
 
 logger = logging.getLogger(__name__)
@@ -159,6 +156,8 @@ async def get_agent_credits(
     """
     agent_id = str(current_user.id)
     balance = await promotion_repo.get_agent_credit_balance(db, agent_id)
+    if balance is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent profile not found")
     transactions = await promotion_repo.get_agent_credit_transactions(db, agent_id)
     transactions_list = [CreditTransactionResponse.model_validate(txn) for txn in transactions]
 
@@ -206,11 +205,7 @@ async def purchase_credits(
     - Transaction record
     """
     # Fetch package
-    result = await db.execute(
-        select(CreditPackage).where(CreditPackage.id == purchase_data.package_id)
-    )
-    package = result.scalar_one_or_none()
-
+    package = await promotion_repo.get_credit_package_by_id(db, purchase_data.package_id)
     if not package or not package.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Credit package not found or inactive")
 
@@ -226,7 +221,6 @@ async def purchase_credits(
         description=f"Purchased {package.name} package ({package.credits} credits)",
         payment_reference=payment_reference
     )
-    await db.commit()
 
     new_balance = await promotion_repo.get_agent_credit_balance(db, agent_id)
 
@@ -287,16 +281,14 @@ async def promote_listing(
     target_tier = promotion_data.tier
 
     # Fetch listing
-    result = await db.execute(select(Listing).where(Listing.id == listing_id))
-    listing = result.scalar_one_or_none()
+    listing = await listing_repo.get_listing_by_id_raw(db, listing_id)
     if not listing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found")
 
     ensure_owner_or_admin(listing.agent_id, current_user, "You are not authorized to promote this listing")
 
     # Get tier config
-    result = await db.execute(select(PromotionTierConfig).where(PromotionTierConfig.tier == target_tier))
-    tier_config = result.scalar_one_or_none()
+    tier_config = await promotion_repo.get_tier_config(db, target_tier)
     if not tier_config or not tier_config.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Promotion tier '{target_tier}' not found or inactive")
 
@@ -311,10 +303,7 @@ async def promote_listing(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Listing is already featured")
         elif target_tier == "premium":
             # Featured → Premium: Only charge difference
-            featured_result = await db.execute(
-                select(PromotionTierConfig).where(PromotionTierConfig.tier == "featured")
-            )
-            featured_config = featured_result.scalar_one_or_none()
+            featured_config = await promotion_repo.get_tier_config(db, "featured")
             featured_cost = featured_config.credit_cost if featured_config else 0
             cost = base_cost - featured_cost
         else:
@@ -327,6 +316,8 @@ async def promote_listing(
     # Check credits
     agent_id = str(listing.agent_id)
     current_balance = await promotion_repo.get_agent_credit_balance(db, agent_id)
+    if current_balance is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent profile not found")
     if current_balance < cost:
         raise InsufficientCreditsException(required=cost, available=current_balance)
 
@@ -349,7 +340,6 @@ async def promote_listing(
     )
 
     transaction.promotion_id = promotion.id
-    await db.commit()
 
     new_balance = await promotion_repo.get_agent_credit_balance(db, agent_id)
 
@@ -398,14 +388,13 @@ async def cancel_promotion(
     - New listing tier after cancellation
     """
     # Fetch listing
-    result = await db.execute(select(Listing).where(Listing.id == listing_id))
-    listing = result.scalar_one_or_none()
+    listing = await listing_repo.get_listing_by_id_raw(db, listing_id)
     if not listing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found")
 
     ensure_owner_or_admin(listing.agent_id, current_user, "You are not authorized to cancel this promotion")
 
-    updated_listing = await promotion_repo.cancel_promotion(db, listing_id)
+    updated_listing = await promotion_repo.cancel_promotion(db, listing)
     logger.info(f"Cancelled promotion for listing {listing_id}, new tier: {updated_listing.promotion_tier}")
 
     return CancelPromotionResponse(

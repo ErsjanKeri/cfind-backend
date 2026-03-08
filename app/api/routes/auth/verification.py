@@ -6,18 +6,14 @@ Endpoints:
 - POST /resend-verification - Resend verification email
 """
 
-import uuid
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.exceptions import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from app.db.session import get_db
-from app.models.user import User
-from app.models.token import EmailVerificationToken
 from app.schemas.auth import (
     VerifyEmailResponse,
     ResendVerificationRequest, ResendVerificationResponse,
@@ -25,6 +21,8 @@ from app.schemas.auth import (
 from app.core.security import generate_secure_token
 from app.core.exceptions import TokenExpiredException
 from app.services.email_service import send_verification_email
+from app.repositories.user_repo import get_user_by_email, get_user_by_id
+from app.repositories import auth_repo
 
 limiter = Limiter(key_func=get_remote_address)
 router = APIRouter()
@@ -49,12 +47,7 @@ async def verify_email(
     3. User can now log in
     """
     # Find verification token
-    result = await db.execute(
-        select(EmailVerificationToken)
-        .where(EmailVerificationToken.token == token)
-    )
-    verification_token = result.scalar_one_or_none()
-
+    verification_token = await auth_repo.get_verification_token(db, token)
     if not verification_token:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -63,30 +56,20 @@ async def verify_email(
 
     # Check expiration
     if datetime.now(timezone.utc) > verification_token.expires:
-        # Clean up expired token
         await db.delete(verification_token)
-        await db.commit()
         raise TokenExpiredException("Email verification")
 
     # Get user
-    result = await db.execute(
-        select(User).where(User.id == verification_token.user_id)
-    )
-    user = result.scalar_one_or_none()
-
+    user = await get_user_by_id(db, str(verification_token.user_id), include_profiles=False)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found."
         )
 
-    # Mark email as verified
+    # Mark email as verified and delete token
     user.email_verified = True
-
-    # Delete verification token
     await db.delete(verification_token)
-
-    await db.commit()
 
     return VerifyEmailResponse(
         success=True,
@@ -112,10 +95,7 @@ async def resend_verification(
     Rate limited to 3 requests per hour per IP.
     """
     # Find user
-    result = await db.execute(
-        select(User).where(User.email == resend_request.email)
-    )
-    user = result.scalar_one_or_none()
+    user = await get_user_by_email(db, resend_request.email)
 
     # Always return success (don't reveal if email exists)
     if not user:
@@ -131,24 +111,12 @@ async def resend_verification(
             message="Email is already verified. You can log in."
         )
 
-    # Delete old verification tokens for this user
-    await db.execute(
-        delete(EmailVerificationToken).where(EmailVerificationToken.user_id == user.id)
-    )
+    # Delete old verification tokens and create new one
+    await auth_repo.delete_user_verification_tokens(db, user.id)
 
-    # Generate new token
     token = generate_secure_token()
     expires = datetime.now(timezone.utc) + timedelta(hours=24)
-
-    verification_token = EmailVerificationToken(
-        id=uuid.uuid4(),
-        user_id=user.id,
-        token=token,
-        expires=expires
-    )
-    db.add(verification_token)
-
-    await db.commit()
+    await auth_repo.create_verification_token(db, user.id, token, expires)
 
     # Send verification email
     await send_verification_email(

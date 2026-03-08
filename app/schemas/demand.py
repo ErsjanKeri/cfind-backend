@@ -228,6 +228,9 @@ class BuyerDemandsResponse(BaseSchema):
 
     success: bool = True
     total: int
+    page: int
+    limit: int
+    total_pages: int
     demands: List[DemandResponse]
 
 
@@ -236,4 +239,7 @@ class AgentClaimedDemandsResponse(BaseSchema):
 
     success: bool = True
     total: int
+    page: int
+    limit: int
+    total_pages: int
     demands: List[DemandResponse]

@@ -80,6 +80,9 @@ class AgentLeadsResponse(BaseSchema):
 
     success: bool = True
     total: int
+    page: int
+    limit: int
+    total_pages: int
     leads: List[AgentLead]
 
 
@@ -109,6 +112,9 @@ class BuyerLeadsResponse(BaseSchema):
 
     success: bool = True
     total: int
+    page: int
+    limit: int
+    total_pages: int
     leads: List[BuyerLead]
 
 
@@ -135,4 +141,7 @@ class SavedListingsResponse(BaseSchema):
 
     success: bool = True
     total: int
+    page: int
+    limit: int
+    total_pages: int
     listings: List[SavedListingItem]

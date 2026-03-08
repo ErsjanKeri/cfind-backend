@@ -140,7 +140,7 @@ class TestCreateLead:
 class TestGetLeads:
 
     async def test_agent_sees_leads_with_buyer_info(self, client, registered_agent, admin_user, registered_buyer):
-        """Agent's lead list includes buyer name/email."""
+        """Agent's lead list includes buyer name/email and pagination metadata."""
         listing_id = await setup_listing(client, registered_agent, admin_user)
 
         # Buyer creates a lead
@@ -154,12 +154,16 @@ class TestGetLeads:
         agent_cookies = await login_user(client, registered_agent["email"], registered_agent["password"])
         r = await client.get(f"/api/leads/agent/{registered_agent['id']}", cookies=agent_cookies)
         assert r.status_code == 200
-        leads = r.json()["leads"]
+        data = r.json()
+        assert data["page"] == 1
+        assert data["limit"] == 20
+        assert "total_pages" in data
+        leads = data["leads"]
         assert len(leads) >= 1
         assert leads[0]["buyer_name"] is not None
 
     async def test_buyer_sees_leads_with_agent_info(self, client, registered_agent, admin_user, registered_buyer):
-        """Buyer's lead list includes agent contact details."""
+        """Buyer's lead list includes agent contact details and pagination metadata."""
         listing_id = await setup_listing(client, registered_agent, admin_user)
 
         buyer_cookies = await login_user(client, registered_buyer["email"], registered_buyer["password"])
@@ -170,7 +174,11 @@ class TestGetLeads:
 
         r = await client.get(f"/api/leads/buyer/{registered_buyer['id']}", cookies=buyer_cookies)
         assert r.status_code == 200
-        leads = r.json()["leads"]
+        data = r.json()
+        assert data["page"] == 1
+        assert data["limit"] == 20
+        assert "total_pages" in data
+        leads = data["leads"]
         assert len(leads) >= 1
         assert leads[0]["agent_name"] is not None
 
@@ -214,10 +222,14 @@ class TestSavedListings:
         # Save a listing
         await client.post(f"/api/leads/saved/{listing_id}", headers=headers, cookies=cookies)
 
-        # Get saved listings
+        # Get saved listings — now returns pagination metadata
         r = await client.get("/api/leads/saved", cookies=buyer_cookies)
         assert r.status_code == 200
-        saved = r.json()["listings"]
+        data = r.json()
+        assert data["page"] == 1
+        assert data["limit"] == 20
+        assert "total_pages" in data
+        saved = data["listings"]
         assert len(saved) >= 1
         saved_ids = [s["id"] for s in saved]
         assert listing_id in saved_ids

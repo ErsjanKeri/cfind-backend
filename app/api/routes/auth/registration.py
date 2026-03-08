@@ -13,18 +13,18 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Request, status, Form, UploadFile, File
 from fastapi.exceptions import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from app.db.session import get_db
 from app.models.user import User, AgentProfile
-from app.models.token import EmailVerificationToken
 from app.schemas.auth import RegisterResponse
 from app.core.security import hash_password, generate_secure_token, validate_password_strength
 from app.services.email_service import send_verification_email
 from app.services.upload_service import upload_document_direct, delete_old_image
 from app.core.constants import VALID_COUNTRY_CODES
+from app.repositories.user_repo import get_user_by_email
+from app.repositories import auth_repo
 
 logger = logging.getLogger(__name__)
 limiter = Limiter(key_func=get_remote_address)
@@ -102,10 +102,8 @@ async def register(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     # Check if email already exists (generic message to prevent email enumeration)
-    existing = await db.execute(
-        select(User).where(User.email == email)
-    )
-    if existing.scalar_one_or_none():
+    existing = await get_user_by_email(db, email)
+    if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="An account with this email already exists."
@@ -217,16 +215,7 @@ async def register(
 
         token = generate_secure_token()
         expires = datetime.now(timezone.utc) + timedelta(hours=24)
-
-        verification_token = EmailVerificationToken(
-            id=uuid.uuid4(),
-            user_id=user.id,
-            token=token,
-            expires=expires
-        )
-        db.add(verification_token)
-
-        await db.commit()
+        await auth_repo.create_verification_token(db, user.id, token, expires)
     except Exception:
         for url in uploaded_urls:
             try:

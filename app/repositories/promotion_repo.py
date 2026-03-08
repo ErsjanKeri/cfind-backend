@@ -15,7 +15,6 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, and_, desc
 from sqlalchemy.orm import selectinload
-from fastapi import HTTPException, status
 import uuid
 
 from app.models.promotion import CreditPackage, PromotionTierConfig, CreditTransaction, PromotionHistory
@@ -58,9 +57,26 @@ async def get_credit_packages(db: AsyncSession) -> List[CreditPackage]:
     return packages
 
 
-# ============================================================================
-# PROMOTION TIER CONFIGS
-# ============================================================================
+async def get_credit_package_by_id(
+    db: AsyncSession,
+    package_id: str,
+) -> Optional[CreditPackage]:
+    """Get a single credit package by ID."""
+    result = await db.execute(
+        select(CreditPackage).where(CreditPackage.id == package_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_tier_config(
+    db: AsyncSession,
+    tier: str,
+) -> Optional[PromotionTierConfig]:
+    """Get a single promotion tier config by tier name."""
+    result = await db.execute(
+        select(PromotionTierConfig).where(PromotionTierConfig.tier == tier)
+    )
+    return result.scalar_one_or_none()
 
 async def get_promotion_tier_configs(db: AsyncSession) -> List[PromotionTierConfig]:
     """
@@ -95,34 +111,18 @@ async def get_promotion_tier_configs(db: AsyncSession) -> List[PromotionTierConf
 async def get_agent_credit_balance(
     db: AsyncSession,
     agent_id: str
-) -> int:
+) -> Optional[int]:
     """
     Get agent's current credit balance.
 
-    Args:
-        db: Database session
-        agent_id: Agent UUID
-
     Returns:
-        Current credit balance
-
-    Raises:
-        HTTPException: If agent not found
+        Credit balance, or None if agent profile not found.
     """
     result = await db.execute(
         select(AgentProfile.credit_balance)
         .where(AgentProfile.user_id == agent_id)
     )
-
-    balance = result.scalar_one_or_none()
-
-    if balance is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Agent profile not found"
-        )
-
-    return balance
+    return result.scalar_one_or_none()
 
 
 async def get_agent_credit_transactions(
@@ -320,7 +320,7 @@ async def promote_listing(
 
 async def cancel_promotion(
     db: AsyncSession,
-    listing_id: str
+    listing: Listing,
 ) -> Listing:
     """
     Cancel active promotion for a listing.
@@ -329,30 +329,16 @@ async def cancel_promotion(
 
     Updates:
     - Marks current PromotionHistory as "cancelled"
-    - Checks for other active promotions
-    - If no other active promotions, resets listing to "standard" tier
+    - Resets listing to "standard" tier
 
     Args:
         db: Database session
-        listing_id: Listing UUID
+        listing: Listing object (already fetched by caller)
 
     Returns:
         Updated listing object
-
-    Raises:
-        HTTPException: If listing not found
     """
-    # Fetch listing
-    result = await db.execute(
-        select(Listing).where(Listing.id == listing_id)
-    )
-    listing = result.scalar_one_or_none()
-
-    if not listing:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Listing not found"
-        )
+    listing_id = str(listing.id)
 
     # Mark current active promotions as cancelled
     await db.execute(
@@ -371,8 +357,7 @@ async def cancel_promotion(
     listing.promotion_start_date = None
     listing.promotion_end_date = None
 
-    await db.commit()
-    await db.refresh(listing)
+    await db.flush()
 
     logger.info(f"Cancelled promotion for listing {listing_id}")
     return listing
@@ -494,7 +479,7 @@ async def expire_promotions(db: AsyncSession) -> int:
             promotion.listing.promotion_start_date = None
             promotion.listing.promotion_end_date = None
 
-    await db.commit()
+    await db.flush()
 
     logger.info(f"Expired {len(expired_promotions)} promotions")
     return len(expired_promotions)

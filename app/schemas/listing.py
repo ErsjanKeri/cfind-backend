@@ -319,4 +319,7 @@ class AgentListingsResponse(BaseSchema):
 
     success: bool = True
     total: int
+    page: int
+    limit: int
+    total_pages: int
     listings: List[ListingPrivate]  # Agent sees private view of their own listings

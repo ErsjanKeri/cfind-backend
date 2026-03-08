@@ -88,7 +88,7 @@ async def create_demand(
             detail=f"Invalid country code. Must be one of: {', '.join(VALID_COUNTRY_CODES)}"
         )
 
-    demand = await demand_repo.create_demand(db, str(current_user.id), demand_data)
+    demand = await demand_repo.create_demand(db, str(current_user.id), demand_data, buyer=current_user)
 
     return DemandCreateResponse(
         success=True,
@@ -248,10 +248,12 @@ async def claim_demand(
 async def get_buyer_demands(
     buyer_id: str,
     current_user: Annotated[User, Depends(RoleChecker(["buyer", "admin"]))],
+    page: int = Query(default=1, ge=1, description="Page number"),
+    limit: int = Query(default=20, ge=1, le=100, description="Items per page"),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get all demands for a buyer.
+    Get demands for a buyer with pagination.
 
     **Authorization:**
     - Buyer can view their own demands
@@ -261,17 +263,18 @@ async def get_buyer_demands(
     - ALL demands (active, assigned, fulfilled, closed)
     - If assigned: Shows agent contact details
     - Sorted by creation date (newest first)
-
-    **Use case:**
-    Buyer tracks their posted demands and sees which agents claimed them.
     """
     ensure_owner_or_admin(buyer_id, current_user, "You are not authorized to view these demands")
 
-    demands = await demand_repo.get_buyer_demands(db, buyer_id)
+    demands, total = await demand_repo.get_buyer_demands(db, buyer_id, page=page, limit=limit)
+    total_pages = (total + limit - 1) // limit
 
     return BuyerDemandsResponse(
         success=True,
-        total=len(demands),
+        total=total,
+        page=page,
+        limit=limit,
+        total_pages=total_pages,
         demands=demands
     )
 
@@ -289,10 +292,12 @@ async def get_buyer_demands(
 async def get_agent_claimed_demands(
     agent_id: str,
     current_user: Annotated[User, Depends(RoleChecker(["agent", "admin"]))],
+    page: int = Query(default=1, ge=1, description="Page number"),
+    limit: int = Query(default=20, ge=1, le=100, description="Items per page"),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get all demands claimed by an agent.
+    Get demands claimed by an agent with pagination.
 
     **Authorization:**
     - Agent can view their own claimed demands
@@ -302,17 +307,18 @@ async def get_agent_claimed_demands(
     - All demands where assigned_agent_id = agent_id
     - Buyer contact details
     - Sorted by claim date (newest first)
-
-    **Use case:**
-    Agent tracks which buyer demands they've claimed and can follow up.
     """
     ensure_owner_or_admin(agent_id, current_user, "You are not authorized to view these demands")
 
-    demands = await demand_repo.get_agent_claimed_demands(db, agent_id)
+    demands, total = await demand_repo.get_agent_claimed_demands(db, agent_id, page=page, limit=limit)
+    total_pages = (total + limit - 1) // limit
 
     return AgentClaimedDemandsResponse(
         success=True,
-        total=len(demands),
+        total=total,
+        page=page,
+        limit=limit,
+        total_pages=total_pages,
         demands=demands
     )
 
@@ -357,7 +363,12 @@ async def update_demand_status(
 
     ensure_owner_or_admin(demand_dict.buyer_id, current_user, "You are not authorized to update this demand")
 
-    updated = await demand_repo.update_demand_status(db, demand_id, status_data.status)
+    try:
+        updated = await demand_repo.update_demand_status(db, demand_id, status_data.status)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Demand not found")
 
     return DemandStatusUpdateResponse(
         success=True,
@@ -406,7 +417,12 @@ async def delete_demand(
 
     ensure_owner_or_admin(demand_dict.buyer_id, current_user, "You are not authorized to delete this demand")
 
-    await demand_repo.delete_demand(db, demand_id)
+    try:
+        deleted = await demand_repo.delete_demand(db, demand_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Demand not found")
 
     return DemandDeleteResponse(
         success=True,

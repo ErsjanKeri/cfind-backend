@@ -11,14 +11,14 @@ Handles:
 import logging
 from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, update, and_, func
 from sqlalchemy.orm import selectinload
-from fastapi import HTTPException, status
 import uuid
 
 from app.models.lead import Lead, SavedListing
 from app.models.listing import Listing
 from app.models.user import User, AgentProfile
+from app.models.promotion import PromotionHistory
 from app.schemas.lead import AgentLead, BuyerLead, SavedListingItem
 from app.repositories.listing_repo import transform_public_listing
 
@@ -109,8 +109,18 @@ async def create_lead(
     )
 
     db.add(lead)
-    await db.commit()
-    await db.refresh(lead)
+
+    # Increment leads_during_promotion if listing has active promotion (no-op if not promoted)
+    await db.execute(
+        update(PromotionHistory)
+        .where(
+            PromotionHistory.listing_id == listing_id,
+            PromotionHistory.status == "active"
+        )
+        .values(leads_during_promotion=PromotionHistory.leads_during_promotion + 1)
+    )
+
+    await db.flush()
 
     logger.info(f"Created lead: buyer={buyer_id}, listing={listing_id}, type={interaction_type}")
     return lead
@@ -122,30 +132,23 @@ async def create_lead(
 
 async def get_agent_leads(
     db: AsyncSession,
-    agent_id: str
-) -> List[AgentLead]:
+    agent_id: str,
+    page: int = 1,
+    limit: int = 20
+) -> tuple[list[AgentLead], int]:
     """
-    Get all leads for an agent (all buyers who contacted their listings).
-
-    Returns leads with:
-    - Buyer details (name, email, company)
-    - Listing details (title, asking price)
-    - Interaction type
-    - Contact timestamp
+    Get paginated leads for an agent (buyers who contacted their listings).
 
     Args:
         db: Database session
         agent_id: Agent UUID
+        page: Page number (1-based)
+        limit: Items per page
 
     Returns:
-        List of lead dicts with buyer and listing details
-
-    Example:
-        >>> leads = await get_agent_leads(db, agent_id="123...")
-        >>> for lead in leads:
-        ...     print(f"{lead['buyer_name']} contacted via {lead['interaction_type']}")
+        Tuple of (leads_list, total_count)
     """
-    result = await db.execute(
+    base_query = (
         select(Lead)
         .join(Listing, Lead.listing_id == Listing.id)
         .join(User, Lead.buyer_id == User.id)
@@ -157,6 +160,12 @@ async def get_agent_leads(
         .order_by(Lead.created_at.desc())
     )
 
+    count_query = select(func.count()).select_from(base_query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar()
+
+    offset = (page - 1) * limit
+    result = await db.execute(base_query.offset(offset).limit(limit))
     leads = result.scalars().all()
 
     leads_list = [
@@ -172,8 +181,8 @@ async def get_agent_leads(
         for lead in leads
     ]
 
-    logger.info(f"Fetched {len(leads_list)} leads for agent {agent_id}")
-    return leads_list
+    logger.info(f"Fetched {len(leads_list)} leads for agent {agent_id} (page {page}, total: {total})")
+    return leads_list, total
 
 
 # ============================================================================
@@ -182,30 +191,23 @@ async def get_agent_leads(
 
 async def get_buyer_leads(
     db: AsyncSession,
-    buyer_id: str
-) -> List[BuyerLead]:
+    buyer_id: str,
+    page: int = 1,
+    limit: int = 20
+) -> tuple[list[BuyerLead], int]:
     """
-    Get all leads for a buyer (all agents buyer contacted).
-
-    Returns leads with:
-    - Agent details (name, agency, phone, WhatsApp, email)
-    - Listing details (title, asking price)
-    - Interaction type
-    - Contact timestamp
+    Get paginated leads for a buyer (agents buyer contacted).
 
     Args:
         db: Database session
         buyer_id: Buyer UUID
+        page: Page number (1-based)
+        limit: Items per page
 
     Returns:
-        List of lead dicts with agent and listing details
-
-    Example:
-        >>> leads = await get_buyer_leads(db, buyer_id="123...")
-        >>> for lead in leads:
-        ...     print(f"Contacted {lead['agent_name']} via {lead['interaction_type']}")
+        Tuple of (leads_list, total_count)
     """
-    result = await db.execute(
+    base_query = (
         select(Lead)
         .join(Listing, Lead.listing_id == Listing.id)
         .join(User, Lead.agent_id == User.id)
@@ -217,6 +219,12 @@ async def get_buyer_leads(
         .order_by(Lead.created_at.desc())
     )
 
+    count_query = select(func.count()).select_from(base_query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar()
+
+    offset = (page - 1) * limit
+    result = await db.execute(base_query.offset(offset).limit(limit))
     leads = result.scalars().all()
 
     leads_list = [
@@ -235,8 +243,8 @@ async def get_buyer_leads(
         for lead in leads
     ]
 
-    logger.info(f"Fetched {len(leads_list)} leads for buyer {buyer_id}")
-    return leads_list
+    logger.info(f"Fetched {len(leads_list)} leads for buyer {buyer_id} (page {page}, total: {total})")
+    return leads_list, total
 
 
 # ============================================================================
@@ -281,7 +289,7 @@ async def toggle_saved_listing(
     if saved:
         # Already saved → Unsave
         await db.delete(saved)
-        await db.commit()
+        await db.flush()
         logger.info(f"Unsaved listing {listing_id} for buyer {buyer_id}")
         return False, "Listing removed from saved"
     else:
@@ -291,28 +299,30 @@ async def toggle_saved_listing(
             listing_id=listing_id
         )
         db.add(saved)
-        await db.commit()
+        await db.flush()
         logger.info(f"Saved listing {listing_id} for buyer {buyer_id}")
         return True, "Listing saved successfully"
 
 
 async def get_saved_listings(
     db: AsyncSession,
-    buyer_id: str
-) -> List[SavedListingItem]:
+    buyer_id: str,
+    page: int = 1,
+    limit: int = 20
+) -> tuple[list[SavedListingItem], int]:
     """
-    Get all saved listings for a buyer.
-
-    Returns listings with public view (same as search results) plus saved_at timestamp.
+    Get paginated saved listings for a buyer.
 
     Args:
         db: Database session
         buyer_id: Buyer UUID
+        page: Page number (1-based)
+        limit: Items per page
 
     Returns:
-        List of SavedListingItem models
+        Tuple of (listings_list, total_count)
     """
-    result = await db.execute(
+    base_query = (
         select(SavedListing, Listing, User)
         .join(Listing, SavedListing.listing_id == Listing.id)
         .join(User, Listing.agent_id == User.id)
@@ -324,9 +334,14 @@ async def get_saved_listings(
         .order_by(SavedListing.created_at.desc())
     )
 
+    count_query = select(func.count()).select_from(base_query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar()
+
+    offset = (page - 1) * limit
+    result = await db.execute(base_query.offset(offset).limit(limit))
     rows = result.all()
 
-    # Transform to public view + add saved_at
     listings_list = []
     for saved_listing, listing, agent in rows:
         public = transform_public_listing(listing, agent)
@@ -336,5 +351,5 @@ async def get_saved_listings(
         )
         listings_list.append(saved_item)
 
-    logger.info(f"Fetched {len(listings_list)} saved listings for buyer {buyer_id}")
-    return listings_list
+    logger.info(f"Fetched {len(listings_list)} saved listings for buyer {buyer_id} (page {page}, total: {total})")
+    return listings_list, total

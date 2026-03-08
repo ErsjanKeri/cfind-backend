@@ -159,6 +159,8 @@ async def verify_agent(
     Admin reviews agent documents and approves them.
     """
     agent_profile = await admin_repo.verify_agent(db, agent_id)
+    if not agent_profile:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent profile not found")
 
     return AgentVerificationResponse(
         success=True,
@@ -198,6 +200,8 @@ async def reject_agent(
     agent_profile = await admin_repo.reject_agent(
         db, agent_id, rejection_data.rejection_reason, str(current_user.id)
     )
+    if not agent_profile:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent profile not found")
 
     # Send rejection email (don't fail the request if email fails)
     agent_user = await get_user_by_id(db, agent_id, include_profiles=True)
@@ -254,20 +258,23 @@ async def create_agent(
             detail=f"Invalid operating country. Must be one of: {', '.join(VALID_COUNTRY_CODES)}"
         )
 
-    user = await admin_repo.admin_create_agent(
-        db,
-        agent_data.name,
-        agent_data.email,
-        agent_data.password,
-        agent_data.operating_country,
-        agent_data.company_name,
-        agent_data.license_number,
-        agent_data.phone,
-        agent_data.whatsapp,
-        agent_data.bio_en,
-        agent_data.email_verified,
-        agent_data.verification_status
-    )
+    try:
+        user = await admin_repo.admin_create_agent(
+            db,
+            agent_data.name,
+            agent_data.email,
+            agent_data.password,
+            agent_data.operating_country,
+            agent_data.company_name,
+            agent_data.license_number,
+            agent_data.phone,
+            agent_data.whatsapp,
+            agent_data.bio_en,
+            agent_data.email_verified,
+            agent_data.verification_status
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     return AdminCreateUserResponse(
         success=True,
@@ -302,14 +309,17 @@ async def create_buyer(
     **Use case:**
     Admin creates buyer account for testing or client onboarding.
     """
-    user = await admin_repo.admin_create_buyer(
-        db,
-        buyer_data.name,
-        buyer_data.email,
-        buyer_data.password,
-        buyer_data.company_name,
-        buyer_data.email_verified
-    )
+    try:
+        user = await admin_repo.admin_create_buyer(
+            db,
+            buyer_data.name,
+            buyer_data.email,
+            buyer_data.password,
+            buyer_data.company_name,
+            buyer_data.email_verified
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     return AdminCreateUserResponse(
         success=True,
@@ -355,7 +365,12 @@ async def delete_user(
     **Use case:**
     Admin removes spam accounts or inactive users.
     """
-    await admin_repo.admin_delete_user(db, user_id)
+    try:
+        deleted = await admin_repo.admin_delete_user(db, user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     return AdminDeleteResponse(
         success=True,
@@ -395,6 +410,8 @@ async def toggle_email_verification(
     - If setting to true: User can login immediately
     """
     user = await admin_repo.toggle_email_verification(db, user_id, toggle_data.email_verified)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     return AdminToggleEmailVerificationResponse(
         success=True,
@@ -447,7 +464,6 @@ async def adjust_agent_credits(
         transaction_type="bonus" if adjustment_data.amount > 0 else "adjustment",
         description=adjustment_data.description
     )
-    await db.commit()
 
     new_balance = await promotion_repo.get_agent_credit_balance(db, adjustment_data.agent_id)
 

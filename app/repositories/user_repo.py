@@ -14,8 +14,6 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
-from fastapi import HTTPException, status
-
 from app.models.user import User, AgentProfile
 from app.schemas.user import (
     UserProfileUpdate, AgentProfileUpdate,
@@ -115,19 +113,13 @@ async def update_user_basic_info(
     # Fetch user
     user = await get_user_by_id(db, user_id, include_profiles=True)
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+        return None
 
     # Check if email is being changed and already exists
     if update_data.email and update_data.email != user.email:
         existing = await get_user_by_email(db, update_data.email)
         if existing:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already in use by another account"
-            )
+            raise ValueError("Email already in use by another account")
 
         # Email changed - reset verification
         user.email = update_data.email
@@ -153,21 +145,19 @@ async def update_user_basic_info(
 
     if update_data.country_preference is not None:
         if update_data.country_preference not in VALID_COUNTRY_CODES:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid country code. Must be one of: {', '.join(VALID_COUNTRY_CODES)}"
-            )
+            raise ValueError(f"Invalid country code. Must be one of: {', '.join(VALID_COUNTRY_CODES)}")
         user.country_preference = update_data.country_preference
 
     user.updated_at = datetime.now(timezone.utc)
 
-    await db.commit()
+    await db.flush()
 
     # Re-fetch with agent_profile loaded (db.refresh doesn't load relationships)
     result = await db.execute(
         select(User)
         .options(selectinload(User.agent_profile))
         .where(User.id == user_id)
+        .execution_options(populate_existing=True)
     )
     user = result.scalar_one()
 
@@ -216,10 +206,7 @@ async def update_agent_profile(
     agent_profile = result.scalar_one_or_none()
 
     if not agent_profile:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Agent profile not found"
-        )
+        return None, False
 
     # Apply updates and detect re-verification triggers
     re_verify_fields = {"license_number", "license_document_url", "company_document_url", "id_document_url"}
@@ -243,8 +230,7 @@ async def update_agent_profile(
         agent_profile.rejected_by = None
         agent_profile.verified_at = None
 
-    await db.commit()
-    await db.refresh(agent_profile)
+    await db.flush()
 
     logger.info(f"Updated agent profile: {user_id}, re_verification_triggered: {re_verification_triggered}")
     return agent_profile, re_verification_triggered
@@ -283,10 +269,7 @@ async def check_agent_documents_complete(
     agent_profile = result.scalar_one_or_none()
 
     if not agent_profile:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Agent profile not found"
-        )
+        return False, {}
 
     # Check each document
     status_dict = {
@@ -325,10 +308,7 @@ async def get_agent_verification_status(
     agent_profile = result.scalar_one_or_none()
 
     if not agent_profile:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Agent profile not found"
-        )
+        return None
 
     # Check documents
     documents_complete, documents_status = await check_agent_documents_complete(db, user_id)

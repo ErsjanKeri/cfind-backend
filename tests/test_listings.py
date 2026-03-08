@@ -493,13 +493,60 @@ class TestAgentListings:
             headers=headers, cookies=cookies,
         )
 
-        # Agent listing endpoint shows all
+        # Agent listing endpoint shows all with pagination metadata
         r = await client.get(
             f"/api/listings/agent/{registered_agent['id']}",
             cookies=agent_cookies,
         )
         assert r.status_code == 200
-        assert r.json()["total"] == 2
+        data = r.json()
+        assert data["total"] == 2
+        assert data["page"] == 1
+        assert data["limit"] == 20
+        assert data["total_pages"] == 1
+
+    async def test_agent_listings_pagination(self, client, registered_agent, admin_user):
+        """Agent listing endpoint respects page/limit params."""
+        admin_cookies = await login_user(client, admin_user["email"], admin_user["password"])
+        await approve_agent(client, admin_cookies, registered_agent["id"])
+
+        agent_cookies = await login_user(client, registered_agent["email"], registered_agent["password"])
+        headers, cookies = await auth_headers_and_cookies(agent_cookies)
+
+        # Create 3 listings
+        for i in range(3):
+            r = await client.post(
+                "/api/listings",
+                json=make_listing(public_title_en=f"Business Number {i+1} For Sale"),
+                headers=headers, cookies=cookies,
+            )
+            assert r.status_code == 201
+
+        # Page 1, limit 2 → 2 items, total 3, 2 pages
+        r = await client.get(
+            f"/api/listings/agent/{registered_agent['id']}",
+            params={"page": 1, "limit": 2},
+            cookies=agent_cookies,
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert len(data["listings"]) == 2
+        assert data["total"] == 3
+        assert data["page"] == 1
+        assert data["limit"] == 2
+        assert data["total_pages"] == 2
+
+        # Page 2 → 1 item
+        r2 = await client.get(
+            f"/api/listings/agent/{registered_agent['id']}",
+            params={"page": 2, "limit": 2},
+            cookies=agent_cookies,
+        )
+        assert r2.status_code == 200
+        data2 = r2.json()
+        assert len(data2["listings"]) == 1
+        assert data2["total"] == 3
+        assert data2["page"] == 2
 
     async def test_buyer_cannot_access_agent_listings(self, client, registered_buyer, registered_agent):
         """Buyer role cannot access agent listing endpoint."""

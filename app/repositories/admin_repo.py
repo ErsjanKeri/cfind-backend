@@ -14,7 +14,6 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, func, and_
 from sqlalchemy.orm import selectinload
-from fastapi import HTTPException, status
 import uuid
 
 from app.models.user import User, AgentProfile
@@ -49,10 +48,7 @@ async def verify_agent(
         agent_id: Agent UUID
 
     Returns:
-        Updated agent profile
-
-    Raises:
-        HTTPException: If agent not found
+        Updated agent profile, or None if not found.
     """
     result = await db.execute(
         select(AgentProfile).where(AgentProfile.user_id == agent_id)
@@ -60,10 +56,7 @@ async def verify_agent(
     agent_profile = result.scalar_one_or_none()
 
     if not agent_profile:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Agent profile not found"
-        )
+        return None
 
     # Approve agent
     agent_profile.verification_status = "approved"
@@ -72,8 +65,7 @@ async def verify_agent(
     agent_profile.rejected_at = None
     agent_profile.rejected_by = None
 
-    await db.commit()
-    await db.refresh(agent_profile)
+    await db.flush()
 
     logger.info(f"Approved agent: {agent_id}")
     return agent_profile
@@ -101,10 +93,7 @@ async def reject_agent(
         rejected_by: Admin user ID
 
     Returns:
-        Updated agent profile
-
-    Raises:
-        HTTPException: If agent not found
+        Updated agent profile, or None if not found.
     """
     result = await db.execute(
         select(AgentProfile).where(AgentProfile.user_id == agent_id)
@@ -112,10 +101,7 @@ async def reject_agent(
     agent_profile = result.scalar_one_or_none()
 
     if not agent_profile:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Agent profile not found"
-        )
+        return None
 
     # Reject agent
     agent_profile.verification_status = "rejected"
@@ -124,8 +110,7 @@ async def reject_agent(
     agent_profile.rejected_by = rejected_by
     agent_profile.verified_at = None
 
-    await db.commit()
-    await db.refresh(agent_profile)
+    await db.flush()
 
     logger.info(f"Rejected agent: {agent_id}, reason: {rejection_reason}")
     return agent_profile
@@ -284,20 +269,17 @@ async def admin_create_agent(
         verification_status: Admin can pre-approve
 
     Returns:
-        Created user object
+        Created user object.
 
     Raises:
-        HTTPException: If email already exists
+        ValueError: If email already exists.
     """
     # Check email doesn't exist
     existing = await db.execute(
         select(User).where(User.email == email)
     )
     if existing.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
+        raise ValueError("Email already registered")
 
     # Hash password
     hashed_password = hash_password(password)
@@ -329,8 +311,7 @@ async def admin_create_agent(
     )
     db.add(agent_profile)
 
-    await db.commit()
-    await db.refresh(user)
+    await db.flush()
 
     logger.info(f"Admin created agent: {user.id} ({email})")
     return user
@@ -358,20 +339,17 @@ async def admin_create_buyer(
         email_verified: Admin can bypass email verification
 
     Returns:
-        Created user object
+        Created user object.
 
     Raises:
-        HTTPException: If email already exists
+        ValueError: If email already exists.
     """
     # Check email doesn't exist
     existing = await db.execute(
         select(User).where(User.email == email)
     )
     if existing.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
+        raise ValueError("Email already registered")
 
     # Hash password
     hashed_password = hash_password(password)
@@ -388,8 +366,7 @@ async def admin_create_buyer(
     db.add(user)
     await db.flush()
 
-    await db.commit()
-    await db.refresh(user)
+    await db.flush()
 
     logger.info(f"Admin created buyer: {user.id} ({email})")
     return user
@@ -411,10 +388,10 @@ async def admin_delete_user(
         user_id: User UUID
 
     Returns:
-        True if deleted successfully
+        True if deleted, False if not found.
 
     Raises:
-        HTTPException: If user not found or is admin
+        ValueError: If user is admin.
     """
     # Fetch user
     result = await db.execute(
@@ -423,21 +400,15 @@ async def admin_delete_user(
     user = result.scalar_one_or_none()
 
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+        return False
 
     # Prevent deleting admins
     if user.role == "admin":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot delete admin users"
-        )
+        raise ValueError("Cannot delete admin users")
 
     # Delete user (cascade handles profiles, listings, etc.)
     await db.delete(user)
-    await db.commit()
+    await db.flush()
 
     logger.info(f"Admin deleted user: {user_id}")
     return True
@@ -461,10 +432,7 @@ async def toggle_email_verification(
         email_verified: New verification status
 
     Returns:
-        Updated user object
-
-    Raises:
-        HTTPException: If user not found
+        Updated user object, or None if not found.
     """
     result = await db.execute(
         select(User).where(User.id == user_id)
@@ -472,15 +440,11 @@ async def toggle_email_verification(
     user = result.scalar_one_or_none()
 
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+        return None
 
     user.email_verified = email_verified
 
-    await db.commit()
-    await db.refresh(user)
+    await db.flush()
 
     logger.info(f"Admin toggled email verification for user {user_id}: {email_verified}")
     return user

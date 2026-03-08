@@ -390,7 +390,41 @@ class TestGetDemandLists:
 
         r = await client.get(f"/api/demands/buyer/{registered_buyer['id']}", cookies=cookies)
         assert r.status_code == 200
-        assert r.json()["total"] == 2
+        data = r.json()
+        assert data["total"] == 2
+        assert data["page"] == 1
+        assert data["limit"] == 20
+        assert data["total_pages"] == 1
+
+    async def test_buyer_demands_pagination(self, client, registered_buyer):
+        """Buyer demands endpoint respects page/limit params."""
+        cookies = await login_user(client, registered_buyer["email"], registered_buyer["password"])
+        headers, cookies = await auth_headers_and_cookies(cookies)
+
+        # Create 3 demands
+        for cat in ["restaurant", "bar", "cafe"]:
+            await client.post("/api/demands", json=make_demand(category=cat), headers=headers, cookies=cookies)
+
+        # Page 1, limit 2
+        r = await client.get(
+            f"/api/demands/buyer/{registered_buyer['id']}",
+            params={"page": 1, "limit": 2},
+            cookies=cookies,
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert len(data["demands"]) == 2
+        assert data["total"] == 3
+        assert data["total_pages"] == 2
+
+        # Page 2
+        r2 = await client.get(
+            f"/api/demands/buyer/{registered_buyer['id']}",
+            params={"page": 2, "limit": 2},
+            cookies=cookies,
+        )
+        assert r2.status_code == 200
+        assert len(r2.json()["demands"]) == 1
 
     async def test_agent_sees_claimed_demands(self, client, registered_buyer, registered_agent, admin_user):
         buyer_cookies = await login_user(client, registered_buyer["email"], registered_buyer["password"])
@@ -407,4 +441,8 @@ class TestGetDemandLists:
 
         r2 = await client.get(f"/api/demands/agent/{registered_agent['id']}", cookies=agent_cookies)
         assert r2.status_code == 200
-        assert r2.json()["total"] >= 1
+        data = r2.json()
+        assert data["total"] >= 1
+        assert data["page"] == 1
+        assert data["limit"] == 20
+        assert "total_pages" in data

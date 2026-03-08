@@ -10,7 +10,7 @@ Endpoints:
 """
 
 from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -113,10 +113,12 @@ async def create_lead(
 async def get_agent_leads(
     agent_id: str,
     current_user: Annotated[User, Depends(RoleChecker(["agent", "admin"]))],
+    page: int = Query(default=1, ge=1, description="Page number"),
+    limit: int = Query(default=20, ge=1, le=100, description="Items per page"),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get all leads for an agent.
+    Get leads for an agent with pagination.
 
     **Authorization:**
     - Agent can view their own leads
@@ -127,19 +129,18 @@ async def get_agent_leads(
     - Listing details (title, price)
     - Interaction type (whatsapp, phone, email)
     - Contact timestamp
-
-    Useful for agents to:
-    - See who's interested in their listings
-    - Track buyer engagement
-    - Follow up with potential buyers
     """
     ensure_owner_or_admin(agent_id, current_user, "You are not authorized to view these leads")
 
-    leads = await lead_repo.get_agent_leads(db, agent_id)
+    leads, total = await lead_repo.get_agent_leads(db, agent_id, page=page, limit=limit)
+    total_pages = (total + limit - 1) // limit
 
     return AgentLeadsResponse(
         success=True,
-        total=len(leads),
+        total=total,
+        page=page,
+        limit=limit,
+        total_pages=total_pages,
         leads=leads
     )
 
@@ -157,10 +158,12 @@ async def get_agent_leads(
 async def get_buyer_leads(
     buyer_id: str,
     current_user: Annotated[User, Depends(RoleChecker(["buyer", "admin"]))],
+    page: int = Query(default=1, ge=1, description="Page number"),
+    limit: int = Query(default=20, ge=1, le=100, description="Items per page"),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get all leads for a buyer.
+    Get leads for a buyer with pagination.
 
     **Authorization:**
     - Buyer can view their own leads
@@ -171,19 +174,18 @@ async def get_buyer_leads(
     - Listing details (title, price)
     - Interaction type
     - Contact timestamp
-
-    Useful for buyers to:
-    - Track which agents they've contacted
-    - Review contact history
-    - Follow up on inquiries
     """
     ensure_owner_or_admin(buyer_id, current_user, "You are not authorized to view these leads")
 
-    leads = await lead_repo.get_buyer_leads(db, buyer_id)
+    leads, total = await lead_repo.get_buyer_leads(db, buyer_id, page=page, limit=limit)
+    total_pages = (total + limit - 1) // limit
 
     return BuyerLeadsResponse(
         success=True,
-        total=len(leads),
+        total=total,
+        page=page,
+        limit=limit,
+        total_pages=total_pages,
         leads=leads
     )
 
@@ -238,27 +240,31 @@ async def toggle_saved_listing(
 )
 async def get_saved_listings(
     current_user: Annotated[User, Depends(RoleChecker(["buyer"]))],
+    page: int = Query(default=1, ge=1, description="Page number"),
+    limit: int = Query(default=20, ge=1, le=100, description="Items per page"),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get all saved listings for current buyer.
+    Get saved listings for current buyer with pagination.
 
     **Returns:**
     - Listings (public view)
     - Saved timestamp
     - Sorted by save date (newest first)
-
-    **Note:**
-    If a listing becomes invisible (agent loses verification, status changes),
-    it's soft-deleted from saved listings (won't appear in results).
     """
-    saved_listings = await lead_repo.get_saved_listings(
+    saved_listings, total = await lead_repo.get_saved_listings(
         db,
-        str(current_user.id)
+        str(current_user.id),
+        page=page,
+        limit=limit
     )
+    total_pages = (total + limit - 1) // limit
 
     return SavedListingsResponse(
         success=True,
-        total=len(saved_listings),
+        total=total,
+        page=page,
+        limit=limit,
+        total_pages=total_pages,
         listings=saved_listings
     )

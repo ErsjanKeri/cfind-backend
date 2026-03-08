@@ -15,12 +15,11 @@ import uuid
 from typing import Optional, List, Tuple, Union
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, and_, or_, func, case, desc, asc
+from sqlalchemy import select, delete, update, and_, or_, func, case, desc, asc
 from sqlalchemy.orm import selectinload
-from fastapi import HTTPException, status
-
 from app.models.listing import Listing, ListingImage
 from app.models.user import User, AgentProfile
+from app.models.promotion import PromotionHistory
 from app.schemas.listing import (
     ListingCreate,
     ListingUpdate,
@@ -140,13 +139,21 @@ async def create_listing(
         )
         db.add(image)
 
-    await db.commit()
+    # Increment agent's listings_count
+    await db.execute(
+        update(AgentProfile)
+        .where(AgentProfile.user_id == agent_id)
+        .values(listings_count=AgentProfile.listings_count + 1)
+    )
+
+    await db.flush()
 
     # Re-fetch with images relationship loaded (db.refresh doesn't load relationships)
     result = await db.execute(
         select(Listing)
         .options(selectinload(Listing.images))
         .where(Listing.id == listing.id)
+        .execution_options(populate_existing=True)
     )
     listing = result.scalar_one()
 
@@ -159,13 +166,33 @@ async def create_listing(
 # ============================================================================
 
 async def increment_view_count(db: AsyncSession, listing_id) -> None:
-    """Increment the view count for a listing."""
+    """Increment the view count for a listing (and promotion views if promoted)."""
     await db.execute(
-        Listing.__table__.update()
+        update(Listing)
         .where(Listing.id == listing_id)
         .values(view_count=Listing.view_count + 1)
     )
-    await db.commit()
+    # Also track views for active promotion (no-op if not promoted)
+    await db.execute(
+        update(PromotionHistory)
+        .where(
+            PromotionHistory.listing_id == listing_id,
+            PromotionHistory.status == "active"
+        )
+        .values(views_during_promotion=PromotionHistory.views_during_promotion + 1)
+    )
+    await db.flush()
+
+
+async def get_listing_by_id_raw(
+    db: AsyncSession,
+    listing_id: str,
+) -> Optional[Listing]:
+    """Fetch listing by ID without joins (for ownership checks, promotions, etc.)."""
+    result = await db.execute(
+        select(Listing).where(Listing.id == listing_id)
+    )
+    return result.scalar_one_or_none()
 
 
 async def get_listing_by_id(
@@ -198,6 +225,7 @@ async def get_listing_by_id(
             selectinload(User.agent_profile)
         )
         .where(Listing.id == listing_id)
+        .execution_options(populate_existing=True)
     )
 
     row = result.first()
@@ -361,10 +389,12 @@ async def get_listings(
 
 async def get_agent_listings(
     db: AsyncSession,
-    agent_id: str
-) -> List[ListingPrivate]:
+    agent_id: str,
+    page: int = 1,
+    limit: int = 20
+) -> Tuple[List[ListingPrivate], int]:
     """
-    Get all listings for a specific agent (private view).
+    Get paginated listings for a specific agent (private view).
 
     Shows ALL listings regardless of status or verification
     (draft, active, sold, inactive).
@@ -372,15 +402,13 @@ async def get_agent_listings(
     Args:
         db: Database session
         agent_id: Agent UUID
+        page: Page number (1-based)
+        limit: Items per page
 
     Returns:
-        List of listings (private view)
-
-    Example:
-        >>> listings = await get_agent_listings(db, agent_id="123...")
-        >>> # Agent sees their own listings with full details
+        Tuple of (listings_list, total_count)
     """
-    result = await db.execute(
+    base_query = (
         select(Listing, User)
         .join(User, Listing.agent_id == User.id)
         .options(
@@ -391,12 +419,18 @@ async def get_agent_listings(
         .order_by(desc(Listing.created_at))
     )
 
+    count_query = select(func.count()).select_from(base_query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar()
+
+    offset = (page - 1) * limit
+    result = await db.execute(base_query.offset(offset).limit(limit))
     rows = result.all()
 
     listings_list = [transform_private_listing(listing, agent) for listing, agent in rows]
 
-    logger.info(f"Fetched {len(listings_list)} listings for agent {agent_id}")
-    return listings_list
+    logger.info(f"Fetched {len(listings_list)} listings for agent {agent_id} (page {page}, total: {total})")
+    return listings_list, total
 
 
 # ============================================================================
@@ -419,10 +453,7 @@ async def update_listing(
         update_data: Update schema
 
     Returns:
-        Updated listing object
-
-    Raises:
-        HTTPException: If listing not found
+        Updated listing object, or None if not found.
     """
     # Fetch listing with images
     result = await db.execute(
@@ -433,10 +464,7 @@ async def update_listing(
     listing = result.scalar_one_or_none()
 
     if not listing:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Listing not found"
-        )
+        return None
 
     # Apply all provided fields (images handled separately below)
     roi_fields = {"asking_price_eur", "monthly_revenue_eur"}
@@ -471,13 +499,14 @@ async def update_listing(
 
     listing.updated_at = datetime.now(timezone.utc)
 
-    await db.commit()
+    await db.flush()
 
     # Re-fetch with images relationship loaded (db.refresh doesn't load relationships)
     result = await db.execute(
         select(Listing)
         .options(selectinload(Listing.images))
         .where(Listing.id == listing.id)
+        .execution_options(populate_existing=True)
     )
     listing = result.scalar_one()
 
@@ -491,7 +520,8 @@ async def update_listing(
 
 async def delete_listing(
     db: AsyncSession,
-    listing_id: str
+    listing_id: str,
+    agent_id: str = None
 ) -> bool:
     """
     Delete listing and all associated data (images, leads, etc.).
@@ -505,23 +535,25 @@ async def delete_listing(
     Args:
         db: Database session
         listing_id: Listing UUID
+        agent_id: Agent UUID (to decrement listings_count)
 
     Returns:
-        True if deleted successfully
-
-    Raises:
-        HTTPException: If listing not found
+        True if deleted, False if not found.
     """
     result = await db.execute(
         delete(Listing).where(Listing.id == listing_id)
     )
 
     if result.rowcount == 0:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Listing not found"
+        return False
+
+    if agent_id:
+        await db.execute(
+            update(AgentProfile)
+            .where(AgentProfile.user_id == agent_id)
+            .values(listings_count=func.greatest(AgentProfile.listings_count - 1, 0))
         )
 
-    await db.commit()
+    await db.flush()
     logger.info(f"Deleted listing: {listing_id}")
     return True

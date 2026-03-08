@@ -15,7 +15,7 @@ Endpoints:
 """
 
 from typing import Annotated
-from fastapi import APIRouter, Depends, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -48,7 +48,10 @@ async def _update_agent_document(db, user_id: str, document_type: str, document_
         update_data.company_document_url = document_url
     elif document_type == "id":
         update_data.id_document_url = document_url
-    return await user_repo.update_agent_profile(db, user_id, update_data)
+    agent_profile, re_verification_triggered = await user_repo.update_agent_profile(db, user_id, update_data)
+    if not agent_profile:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent profile not found")
+    return agent_profile, re_verification_triggered
 
 # Initialize router
 router = APIRouter(prefix="/upload", tags=["File Upload"])

@@ -15,7 +15,6 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, and_, desc, func
 from sqlalchemy.orm import selectinload
-from fastapi import HTTPException, status
 import uuid
 
 from app.models.demand import BuyerDemand
@@ -54,7 +53,8 @@ def _transform_demand(demand, buyer=None, assigned_agent=None, assigned_agent_pr
 async def create_demand(
     db: AsyncSession,
     buyer_id: str,
-    demand_data: DemandCreate
+    demand_data: DemandCreate,
+    buyer: User = None
 ) -> DemandResponse:
     """
     Create new buyer demand.
@@ -65,6 +65,7 @@ async def create_demand(
         db: Database session
         buyer_id: Buyer UUID
         demand_data: Demand creation schema
+        buyer: Buyer User object (avoids needing to reload relationship after flush)
 
     Returns:
         Created demand as DemandResponse
@@ -85,19 +86,18 @@ async def create_demand(
 
     db.add(demand)
     demand_id = demand.id
-    await db.commit()
+    await db.flush()
 
-    # Re-fetch with buyer relationship (populate_existing forces reload from DB)
+    # Re-fetch to get server-generated fields (created_at, updated_at)
     result = await db.execute(
         select(BuyerDemand)
-        .options(selectinload(BuyerDemand.buyer))
         .where(BuyerDemand.id == demand_id)
         .execution_options(populate_existing=True)
     )
     demand = result.scalar_one()
 
     logger.info(f"Created buyer demand: {demand.id} by buyer {buyer_id}")
-    return _transform_demand(demand)
+    return _transform_demand(demand, buyer=buyer)
 
 
 # ============================================================================
@@ -199,26 +199,23 @@ async def get_active_demands(
 
 async def get_buyer_demands(
     db: AsyncSession,
-    buyer_id: str
-) -> List[DemandResponse]:
+    buyer_id: str,
+    page: int = 1,
+    limit: int = 20
+) -> Tuple[List[DemandResponse], int]:
     """
-    Get all demands for a buyer (all statuses).
-
-    Returns demands with assigned agent details if assigned.
+    Get paginated demands for a buyer (all statuses).
 
     Args:
         db: Database session
         buyer_id: Buyer UUID
+        page: Page number (1-based)
+        limit: Items per page
 
     Returns:
-        List of demand dicts
-
-    Example:
-        >>> demands = await get_buyer_demands(db, buyer_id="123...")
-        >>> for demand in demands:
-        ...     print(f"Status: {demand['status']}")
+        Tuple of (demands_list, total_count)
     """
-    result = await db.execute(
+    base_query = (
         select(BuyerDemand)
         .options(
             selectinload(BuyerDemand.buyer),
@@ -228,12 +225,18 @@ async def get_buyer_demands(
         .order_by(desc(BuyerDemand.created_at))
     )
 
+    count_query = select(func.count()).select_from(base_query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar()
+
+    offset = (page - 1) * limit
+    result = await db.execute(base_query.offset(offset).limit(limit))
     demands = result.scalars().all()
 
     demands_list = [_transform_demand(demand) for demand in demands]
 
-    logger.info(f"Fetched {len(demands_list)} demands for buyer {buyer_id}")
-    return demands_list
+    logger.info(f"Fetched {len(demands_list)} demands for buyer {buyer_id} (page {page}, total: {total})")
+    return demands_list, total
 
 
 # ============================================================================
@@ -242,25 +245,23 @@ async def get_buyer_demands(
 
 async def get_agent_claimed_demands(
     db: AsyncSession,
-    agent_id: str
-) -> List[DemandResponse]:
+    agent_id: str,
+    page: int = 1,
+    limit: int = 20
+) -> Tuple[List[DemandResponse], int]:
     """
-    Get all demands claimed by an agent.
-
-    Returns demands with buyer details.
+    Get paginated demands claimed by an agent.
 
     Args:
         db: Database session
         agent_id: Agent UUID
+        page: Page number (1-based)
+        limit: Items per page
 
     Returns:
-        List of claimed demand dicts
-
-    Example:
-        >>> demands = await get_agent_claimed_demands(db, agent_id="123...")
-        >>> print(f"Agent has claimed {len(demands)} demands")
+        Tuple of (demands_list, total_count)
     """
-    result = await db.execute(
+    base_query = (
         select(BuyerDemand)
         .options(
             selectinload(BuyerDemand.buyer),
@@ -270,12 +271,18 @@ async def get_agent_claimed_demands(
         .order_by(desc(BuyerDemand.assigned_at))
     )
 
+    count_query = select(func.count()).select_from(base_query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar()
+
+    offset = (page - 1) * limit
+    result = await db.execute(base_query.offset(offset).limit(limit))
     demands = result.scalars().all()
 
     demands_list = [_transform_demand(demand) for demand in demands]
 
-    logger.info(f"Fetched {len(demands_list)} claimed demands for agent {agent_id}")
-    return demands_list
+    logger.info(f"Fetched {len(demands_list)} claimed demands for agent {agent_id} (page {page}, total: {total})")
+    return demands_list, total
 
 
 # ============================================================================
@@ -332,7 +339,7 @@ async def claim_demand(
         logger.warning(f"Failed to claim demand {demand_id} - already claimed or not found")
         return None
 
-    await db.commit()
+    await db.flush()
 
     # Fetch updated demand with buyer info
     result = await db.execute(
@@ -379,10 +386,7 @@ async def update_demand_status(
     demand = result.scalar_one_or_none()
 
     if not demand:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Demand not found"
-        )
+        return None
 
     valid_transitions = {
         "active": ["closed"],
@@ -390,16 +394,20 @@ async def update_demand_status(
     }
     allowed = valid_transitions.get(demand.status, [])
     if new_status not in allowed:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot transition from '{demand.status}' to '{new_status}'"
-        )
+        raise ValueError(f"Cannot transition from '{demand.status}' to '{new_status}'")
 
     demand.status = new_status
     demand.updated_at = datetime.now(timezone.utc)
 
-    await db.commit()
-    await db.refresh(demand)
+    # Increment agent's deals_completed when demand is fulfilled
+    if new_status == "fulfilled" and demand.assigned_agent_id:
+        await db.execute(
+            update(AgentProfile)
+            .where(AgentProfile.user_id == demand.assigned_agent_id)
+            .values(deals_completed=AgentProfile.deals_completed + 1)
+        )
+
+    await db.flush()
 
     logger.info(f"Updated demand {demand_id} status to {new_status}")
     return _transform_demand(demand)
@@ -446,17 +454,13 @@ async def delete_demand(
     demand = result.scalar_one_or_none()
 
     if not demand:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Demand not found"
-        )
+        return False
 
     # Check deletion rules
     if demand.status in ["assigned", "fulfilled", "closed"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot delete {demand.status} demand. Only active demands can be deleted. "
-                   f"Assigned, fulfilled, and closed demands are kept for historical tracking."
+        raise ValueError(
+            f"Cannot delete {demand.status} demand. Only active demands can be deleted. "
+            f"Assigned, fulfilled, and closed demands are kept for historical tracking."
         )
 
     # Delete demand (status = "active")
@@ -464,7 +468,7 @@ async def delete_demand(
         delete(BuyerDemand).where(BuyerDemand.id == demand_id)
     )
 
-    await db.commit()
+    await db.flush()
 
     logger.info(f"Deleted demand: {demand_id}")
     return True

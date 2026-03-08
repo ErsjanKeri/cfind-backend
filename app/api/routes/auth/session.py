@@ -14,16 +14,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.exceptions import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
 from jose import JWTError
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from app.db.session import get_db
 from app.models.user import User
-
-logger = logging.getLogger(__name__)
-from app.models.token import RefreshToken
 from app.schemas.auth import (
     LoginRequest, LoginResponse,
     LogoutResponse, RefreshTokenResponse,
@@ -36,8 +32,11 @@ from app.core.security import (
 )
 from app.core.exceptions import EmailNotVerifiedException, InvalidCredentialsException
 from app.api.deps import get_current_user, verify_csrf_token
-from app.repositories.user_repo import get_user_by_email
+from app.repositories.user_repo import get_user_by_email, get_user_by_id
+from app.repositories import auth_repo
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 limiter = Limiter(key_func=get_remote_address)
 router = APIRouter()
@@ -144,7 +143,6 @@ async def login(
     # Update password hash if parameters changed
     if new_hash:
         user.password = new_hash
-        await db.commit()
 
     # Check email verification
     if not user.email_verified:
@@ -179,17 +177,15 @@ async def login(
     )
 
     # Store refresh token in database
-    refresh_record = RefreshToken(
-        id=uuid.uuid4(),
+    await auth_repo.store_refresh_token(
+        db=db,
         user_id=user.id,
         jti=jti,
         session_id=session_id,
         expires_at=datetime.now(timezone.utc) + refresh_expires_delta,
         ip_address=request.client.host if request.client else None,
-        user_agent=request.headers.get("User-Agent")
+        user_agent=request.headers.get("User-Agent"),
     )
-    db.add(refresh_record)
-    await db.commit()
 
     # Set cookies
     refresh_max_age = int(refresh_expires_delta.total_seconds())
@@ -239,16 +235,7 @@ async def refresh_token(
         user_id = payload.get("sub")
 
         # Verify token in database (check revocation)
-        result = await db.execute(
-            select(RefreshToken)
-            .where(
-                RefreshToken.jti == jti,
-                RefreshToken.revoked == False,
-                RefreshToken.expires_at > datetime.now(timezone.utc)
-            )
-        )
-        token_record = result.scalar_one_or_none()
-
+        token_record = await auth_repo.get_valid_refresh_token(db, jti)
         if not token_record:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -256,11 +243,7 @@ async def refresh_token(
             )
 
         # Fetch fresh user data from database
-        result = await db.execute(
-            select(User).where(User.id == user_id)
-        )
-        user = result.scalar_one_or_none()
-
+        user = await get_user_by_id(db, user_id, include_profiles=False)
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -328,12 +311,7 @@ async def logout(
             jti = payload.get("jti")
 
             # Revoke token in database
-            await db.execute(
-                update(RefreshToken)
-                .where(RefreshToken.jti == jti)
-                .values(revoked=True, revoked_at=datetime.now(timezone.utc))
-            )
-            await db.commit()
+            await auth_repo.revoke_refresh_token(db, jti)
         except Exception as e:
             logger.warning(f"Error revoking refresh token during logout: {e}")
 

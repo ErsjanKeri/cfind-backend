@@ -90,7 +90,12 @@ async def update_user_profile(
     - User must re-verify email
     - New verification email is sent
     """
-    updated_user = await user_repo.update_user_basic_info(db, str(current_user.id), update_data)
+    try:
+        updated_user = await user_repo.update_user_basic_info(db, str(current_user.id), update_data)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    if not updated_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     return UserProfileUpdateResponse(
         success=True,
@@ -131,7 +136,7 @@ async def upload_profile_image(
     if current_user.image:
         await delete_old_image(current_user.image)
 
-    # Update user record
+    # Update user record (user is authenticated, so profile should exist)
     await user_repo.update_user_basic_info(db, str(current_user.id), UserProfileUpdate(image=image_url))
 
     return ImageUploadResponse(
@@ -215,9 +220,12 @@ async def update_agent_profile(
     )
 
     # Update profile (repo handles re-verification triggers)
-    agent_profile, re_verification_triggered = await user_repo.update_agent_profile(
+    result = await user_repo.update_agent_profile(
         db, str(current_user.id), update_data
     )
+    agent_profile, re_verification_triggered = result
+    if not agent_profile:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent profile not found")
 
     message = "Agent profile updated successfully"
     if re_verification_triggered:
@@ -252,6 +260,8 @@ async def get_verification_status(
     - rejection_reason: If rejected
     """
     verification = await user_repo.get_agent_verification_status(db, str(current_user.id))
+    if not verification:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent profile not found")
 
     return VerificationStatusResponse(
         success=True,

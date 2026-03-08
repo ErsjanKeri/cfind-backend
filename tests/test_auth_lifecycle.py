@@ -59,8 +59,8 @@ class TestBuyerRegistration:
         r2 = await client.post("/api/auth/register", data={
             "name": "Second", "email": email, "password": test_password, "role": "buyer",
         })
-        assert r2.status_code == 400
-        assert "already registered" in r2.json()["detail"].lower()
+        assert r2.status_code == 409
+        assert "already exists" in r2.json()["detail"].lower()
 
     async def test_invalid_email_format_rejected(self, client, test_password):
         r = await client.post("/api/auth/register", data={

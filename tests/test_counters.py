@@ -235,8 +235,8 @@ class TestPromotionCounters:
         # Give credits and promote
         await give_credits(registered_agent["id"], 50)
         r2 = await client.post(
-            f"/api/promotions/listings/{listing_id}/promote",
-            json={"target_tier": "featured"},
+            f"/api/promotions/{listing_id}/promote",
+            json={"tier": "featured"},
             headers=headers, cookies=cookies,
         )
         assert r2.status_code == 200
@@ -270,8 +270,8 @@ class TestPromotionCounters:
         # Give credits and promote
         await give_credits(registered_agent["id"], 50)
         r2 = await client.post(
-            f"/api/promotions/listings/{listing_id}/promote",
-            json={"target_tier": "featured"},
+            f"/api/promotions/{listing_id}/promote",
+            json={"tier": "featured"},
             headers=headers, cookies=cookies,
         )
         assert r2.status_code == 200

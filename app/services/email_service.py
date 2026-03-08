@@ -9,6 +9,8 @@ Handles all transactional emails:
 - Buyer demand claimed notification
 """
 
+import asyncio
+import html
 import logging
 import smtplib
 import ssl
@@ -54,39 +56,31 @@ async def send_email_smtp(
         logger.info(f"Content: {html_content[:200]}...")
         return True
 
-    try:
-        # Create message
+    def _send_sync():
         msg = MIMEMultipart('alternative')
         msg['Subject'] = subject
         msg['From'] = f"{settings.EMAIL_FROM_NAME} <{settings.EMAIL_FROM}>"
         msg['To'] = to_email
 
-        # Attach text version
         if text_content:
-            text_part = MIMEText(text_content, 'plain')
-            msg.attach(text_part)
+            msg.attach(MIMEText(text_content, 'plain'))
+        msg.attach(MIMEText(html_content, 'html'))
 
-        # Attach HTML version
-        html_part = MIMEText(html_content, 'html')
-        msg.attach(html_part)
-
-        # Send via SMTP
         if settings.SMTP_PORT == 465:
-            # SSL connection
             context = ssl.create_default_context()
             with smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, context=context) as server:
                 server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
                 server.send_message(msg)
         elif settings.SMTP_PORT == 587:
-            # TLS connection (most common, including ZeptoMail)
             with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
                 server.starttls()
                 server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
                 server.send_message(msg)
         else:
-            logger.error(f"Unsupported SMTP port: {settings.SMTP_PORT}. Use 465 (SSL) or 587 (TLS)")
-            return False
+            raise ValueError(f"Unsupported SMTP port: {settings.SMTP_PORT}")
 
+    try:
+        await asyncio.to_thread(_send_sync)
         logger.info(f"SMTP email sent successfully to {to_email}")
         return True
 
@@ -147,6 +141,7 @@ async def send_verification_email(
     Returns:
         True if email sent successfully, False otherwise
     """
+    safe_name = html.escape(user_name)
     verification_url = f"{settings.APP_URL}/verify-email?token={verification_token}"
 
     html_content = f"""
@@ -169,7 +164,7 @@ async def send_verification_email(
                 <h1>Welcome to CompanyFinder Albania!</h1>
             </div>
             <div class="content">
-                <p>Hello {user_name},</p>
+                <p>Hello {safe_name},</p>
 
                 <p>Thank you for registering with CompanyFinder Albania, the premier marketplace for buying and selling businesses in Albania.</p>
 
@@ -236,6 +231,7 @@ async def send_password_reset_email(
     Returns:
         True if email sent successfully, False otherwise
     """
+    safe_name = html.escape(user_name)
     reset_url = f"{settings.APP_URL}/reset-password?token={reset_token}"
 
     html_content = f"""
@@ -259,7 +255,7 @@ async def send_password_reset_email(
                 <h1>Password Reset Request</h1>
             </div>
             <div class="content">
-                <p>Hello {user_name},</p>
+                <p>Hello {safe_name},</p>
 
                 <p>We received a request to reset your password for your CompanyFinder Albania account.</p>
 
@@ -351,7 +347,7 @@ async def send_password_changed_email(
                 <h1>✓ Password Changed Successfully</h1>
             </div>
             <div class="content">
-                <p>Hello {user_name},</p>
+                <p>Hello {html.escape(user_name)},</p>
 
                 <div class="success">
                     <p><strong>Your password has been successfully changed.</strong></p>
@@ -415,6 +411,8 @@ async def send_agent_rejection_email(
     Returns:
         True if email sent successfully, False otherwise
     """
+    safe_name = html.escape(agent_name)
+    safe_reason = html.escape(rejection_reason)
     settings_url = f"{settings.APP_URL}/settings"
 
     html_content = f"""
@@ -438,7 +436,7 @@ async def send_agent_rejection_email(
                 <h1>Agent Verification Update</h1>
             </div>
             <div class="content">
-                <p>Hello {agent_name},</p>
+                <p>Hello {safe_name},</p>
 
                 <p>Thank you for your interest in joining CompanyFinder Albania as a verified agent.</p>
 
@@ -446,7 +444,7 @@ async def send_agent_rejection_email(
 
                 <div class="reason-box">
                     <p><strong>Reason for decline:</strong></p>
-                    <p>{rejection_reason}</p>
+                    <p>{safe_reason}</p>
                 </div>
 
                 <p><strong>What you can do next:</strong></p>
@@ -521,6 +519,13 @@ async def send_demand_claimed_email(
     Returns:
         True if email sent successfully, False otherwise
     """
+    safe_buyer = html.escape(buyer_name)
+    safe_agent = html.escape(agent_name)
+    safe_agent_email = html.escape(agent_email)
+    safe_phone = html.escape(agent_phone) if agent_phone else None
+    safe_whatsapp = html.escape(agent_whatsapp) if agent_whatsapp else None
+    safe_desc = html.escape(demand_description)
+
     html_content = f"""
     <!DOCTYPE html>
     <html>
@@ -542,24 +547,24 @@ async def send_demand_claimed_email(
                 <h1>🎉 Good News! An Agent is Interested</h1>
             </div>
             <div class="content">
-                <p>Hello {buyer_name},</p>
+                <p>Hello {safe_buyer},</p>
 
                 <p>Great news! A verified agent has shown interest in your business demand and would like to help you.</p>
 
                 <div class="agent-card">
                     <h2 style="margin-top: 0; color: #16a34a;">Agent Details</h2>
-                    <p><strong>Name:</strong> {agent_name}</p>
+                    <p><strong>Name:</strong> {safe_agent}</p>
 
                     <div class="contact-info">
                         <p><strong>Contact Information:</strong></p>
-                        <p>📧 Email: <a href="mailto:{agent_email}">{agent_email}</a></p>
-                        {"<p>📱 Phone: " + agent_phone + "</p>" if agent_phone else ""}
-                        {"<p>💬 WhatsApp: " + agent_whatsapp + "</p>" if agent_whatsapp else ""}
+                        <p>📧 Email: <a href="mailto:{safe_agent_email}">{safe_agent_email}</a></p>
+                        {"<p>📱 Phone: " + safe_phone + "</p>" if safe_phone else ""}
+                        {"<p>💬 WhatsApp: " + safe_whatsapp + "</p>" if safe_whatsapp else ""}
                     </div>
                 </div>
 
                 <p><strong>Your demand:</strong></p>
-                <p style="background: white; padding: 15px; border-left: 4px solid #355781; border-radius: 4px;">{demand_description}</p>
+                <p style="background: white; padding: 15px; border-left: 4px solid #355781; border-radius: 4px;">{safe_desc}</p>
 
                 <p><strong>Next steps:</strong></p>
                 <ul>

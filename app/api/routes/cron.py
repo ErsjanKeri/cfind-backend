@@ -7,6 +7,7 @@ Endpoints:
 Security: Protected with CRON_SECRET header
 """
 
+import hmac
 from fastapi import APIRouter, Header, HTTPException, status, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
@@ -48,7 +49,7 @@ def verify_cron_secret(x_cron_secret: str = Header(...)):
             detail="CRON_SECRET not configured"
         )
 
-    if x_cron_secret != settings.CRON_SECRET:
+    if not hmac.compare_digest(x_cron_secret, settings.CRON_SECRET):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid cron secret"

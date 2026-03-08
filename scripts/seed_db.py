@@ -227,9 +227,7 @@ async def seed_listings():
 
             # Financials
             asking_price_eur=Decimal("350000"),
-            asking_price_lek=Decimal("35000000"),
             monthly_revenue_eur=Decimal("40000"),
-            monthly_revenue_lek=Decimal("4000000"),
             roi=Decimal("41"),
 
             # Metadata
@@ -274,9 +272,7 @@ async def seed_listings():
 
             # Financials
             asking_price_eur=Decimal("180000"),
-            asking_price_lek=Decimal("18000000"),
             monthly_revenue_eur=Decimal("18000"),
-            monthly_revenue_lek=Decimal("1800000"),
             roi=Decimal("43"),
 
             # Metadata
@@ -318,7 +314,6 @@ async def seed_credit_packages():
                 "name": "Starter",
                 "credits": 10,
                 "price_eur": Decimal("15"),
-                "price_lek": Decimal("1500"),
                 "savings": None,
                 "is_popular": False,
                 "sort_order": 1
@@ -327,7 +322,6 @@ async def seed_credit_packages():
                 "name": "Basic",
                 "credits": 25,
                 "price_eur": Decimal("30"),
-                "price_lek": Decimal("3000"),
                 "savings": "Save 20%",
                 "is_popular": False,
                 "sort_order": 2
@@ -336,7 +330,6 @@ async def seed_credit_packages():
                 "name": "Standard",
                 "credits": 50,
                 "price_eur": Decimal("50"),
-                "price_lek": Decimal("5000"),
                 "savings": "Save 33%",
                 "is_popular": True,  # Most popular
                 "sort_order": 3
@@ -345,7 +338,6 @@ async def seed_credit_packages():
                 "name": "Pro",
                 "credits": 100,
                 "price_eur": Decimal("80"),
-                "price_lek": Decimal("8000"),
                 "savings": "Save 47%",
                 "is_popular": False,
                 "sort_order": 4
@@ -354,7 +346,6 @@ async def seed_credit_packages():
                 "name": "Agency",
                 "credits": 250,
                 "price_eur": Decimal("175"),
-                "price_lek": Decimal("17500"),
                 "savings": "Save 53%",
                 "is_popular": False,
                 "sort_order": 5

@@ -9,6 +9,7 @@ Handles:
 - Direct server uploads
 """
 
+import asyncio
 import logging
 from typing import Optional, Dict, Any
 from fastapi import UploadFile, HTTPException, status
@@ -152,12 +153,13 @@ async def generate_image_upload_url(
     # Generate unique S3 key
     key = generate_image_key(folder, filename)
 
-    # Generate presigned POST
-    presigned = generate_presigned_post(
+    # Generate presigned POST (blocking boto3 call)
+    presigned = await asyncio.to_thread(
+        generate_presigned_post,
         key=key,
         content_type=content_type,
         max_file_size=MAX_IMAGE_SIZE,
-        expiration=3600  # 1 hour
+        expiration=3600,
     )
 
     # Get public URL (where file will be accessible after upload)
@@ -209,13 +211,14 @@ async def generate_document_upload_url(
     # Generate unique S3 key
     key = generate_document_key(user_id, document_type, filename)
 
-    # Generate presigned POST (private ACL for sensitive documents)
-    presigned = generate_presigned_post(
+    # Generate presigned POST (blocking boto3 call)
+    presigned = await asyncio.to_thread(
+        generate_presigned_post,
         key=key,
         content_type=content_type,
         max_file_size=MAX_DOCUMENT_SIZE,
-        expiration=3600,  # 1 hour
-        acl="private"
+        expiration=3600,
+        acl="private",
     )
 
     # Get public URL (admin will access via presigned GET)
@@ -273,16 +276,17 @@ async def upload_image_direct(
     # Generate unique key
     key = generate_image_key(folder, file.filename)
 
-    # Upload to S3
+    # Upload to S3 (blocking boto3 call)
     try:
-        url = upload_file(
+        url = await asyncio.to_thread(
+            upload_file,
             file_data=content,
             key=key,
             content_type=file.content_type,
             metadata={
                 'original_filename': file.filename,
                 'upload_type': 'image'
-            }
+            },
         )
 
         logger.info(f"Image uploaded: {key}")
@@ -334,9 +338,10 @@ async def upload_document_direct(
     # Generate unique key
     key = generate_document_key(user_id, document_type, file.filename)
 
-    # Upload to S3
+    # Upload to S3 (blocking boto3 call)
     try:
-        url = upload_file(
+        url = await asyncio.to_thread(
+            upload_file,
             file_data=content,
             key=key,
             content_type=file.content_type,
@@ -345,7 +350,7 @@ async def upload_document_direct(
                 'document_type': document_type,
                 'original_filename': file.filename
             },
-            acl="private"
+            acl="private",
         )
 
         logger.info(f"Document uploaded: {key}")
@@ -387,7 +392,7 @@ async def delete_old_image(image_url: str) -> bool:
         logger.warning(f"Could not extract key from URL: {image_url}")
         return False
 
-    # Delete file
-    return delete_file(key)
+    # Delete file (blocking boto3 call)
+    return await asyncio.to_thread(delete_file, key)
 
 

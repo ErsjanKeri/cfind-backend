@@ -151,9 +151,7 @@ async def seed_database():
                 public_location_area="Blloku",
                 # Pricing
                 asking_price_eur=350000,
-                asking_price_lek=35000000,
                 monthly_revenue_eur=40000,
-                monthly_revenue_lek=4000000,
                 roi=41,
                 # Private info
                 real_business_name="Trattoria Bella Napoli",
@@ -198,9 +196,7 @@ async def seed_database():
                 public_location_area="City Center",
                 # Pricing
                 asking_price_eur=180000,
-                asking_price_lek=18000000,
                 monthly_revenue_eur=18000,
-                monthly_revenue_lek=1800000,
                 roi=43,
                 # Private info
                 real_business_name="The Speakeasy Lounge",
@@ -240,7 +236,6 @@ async def seed_database():
                     name="Starter",
                     credits=10,
                     price_eur=15.0,
-                    price_lek=1500.0,
                     savings=None,
                     is_popular=False,
                     is_active=True,
@@ -251,7 +246,6 @@ async def seed_database():
                     name="Basic",
                     credits=25,
                     price_eur=30.0,
-                    price_lek=3000.0,
                     savings="Save 20%",
                     is_popular=False,
                     is_active=True,
@@ -262,7 +256,6 @@ async def seed_database():
                     name="Standard",
                     credits=50,
                     price_eur=50.0,
-                    price_lek=5000.0,
                     savings="Save 33%",
                     is_popular=True,  # This is the popular package
                     is_active=True,
@@ -273,7 +266,6 @@ async def seed_database():
                     name="Pro",
                     credits=100,
                     price_eur=80.0,
-                    price_lek=8000.0,
                     savings="Save 47%",
                     is_popular=False,
                     is_active=True,
@@ -284,7 +276,6 @@ async def seed_database():
                     name="Agency",
                     credits=250,
                     price_eur=175.0,
-                    price_lek=17500.0,
                     savings="Save 53%",
                     is_popular=False,
                     is_active=True,

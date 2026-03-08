@@ -1,0 +1,41 @@
+# Test-only compose. Spins up a fresh PostgreSQL + runs pytest.
+#
+# Usage:
+#   docker compose -f docker-compose.test.yml up --build --abort-on-container-exit
+#
+# Exit code 0 = all tests passed, non-zero = failures.
+# The DB is ephemeral (no volume) — destroyed after tests finish.
+
+services:
+  test-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: testpass
+      POSTGRES_DB: cfind_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser -d cfind_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+    # No volumes — DB is throwaway
+
+  test-runner:
+    build: .
+    depends_on:
+      test-db:
+        condition: service_healthy
+    environment:
+      # Point tests at the test-db container
+      TEST_DATABASE_URL: "postgresql+asyncpg://testuser:testpass@test-db:5432/cfind_test"
+      # App settings needed for import (won't actually connect to these)
+      DATABASE_URL: "postgresql+asyncpg://testuser:testpass@test-db:5432/cfind_test"
+      ENVIRONMENT: "testing"
+      # Dummy values so Settings() doesn't fail on required fields
+      AWS_ACCESS_KEY_ID: "test"
+      AWS_SECRET_ACCESS_KEY: "test"
+      AWS_BUCKET_NAME: "test-bucket"
+    volumes:
+      - .:/app
+      - ./keys:/app/keys
+    command: python -m pytest tests/ -v --tb=short

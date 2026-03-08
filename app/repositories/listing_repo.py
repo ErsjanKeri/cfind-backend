@@ -32,9 +32,10 @@ from app.schemas.listing import (
 logger = logging.getLogger(__name__)
 
 
-# ============================================================================
-# DATA TRANSFORMATION (PUBLIC VS PRIVATE)
-# ============================================================================
+def _escape_like(value: str) -> str:
+    """Escape special LIKE/ILIKE characters."""
+    return value.replace("%", r"\%").replace("_", r"\_")
+
 
 def _calculate_roi(monthly_revenue, asking_price) -> Optional[float]:
     """Calculate ROI percentage from monthly revenue and asking price."""
@@ -157,6 +158,16 @@ async def create_listing(
 # GET LISTING BY ID
 # ============================================================================
 
+async def increment_view_count(db: AsyncSession, listing_id) -> None:
+    """Increment the view count for a listing."""
+    await db.execute(
+        Listing.__table__.update()
+        .where(Listing.id == listing_id)
+        .values(view_count=Listing.view_count + 1)
+    )
+    await db.commit()
+
+
 async def get_listing_by_id(
     db: AsyncSession,
     listing_id: str,
@@ -266,7 +277,7 @@ async def get_listings(
 
     # Area filter
     if search_params.area:
-        query = query.where(Listing.public_location_area.ilike(f"%{search_params.area}%"))
+        query = query.where(Listing.public_location_area.ilike(f"%{_escape_like(search_params.area)}%"))
 
     # Price range (EUR)
     if search_params.min_price_eur:
@@ -284,7 +295,7 @@ async def get_listings(
     # FULL-TEXT SEARCH
     # ========================================================================
     if search_params.search:
-        search_term = f"%{search_params.search}%"
+        search_term = f"%{_escape_like(search_params.search)}%"
         query = query.where(
             or_(
                 Listing.public_title_en.ilike(search_term),

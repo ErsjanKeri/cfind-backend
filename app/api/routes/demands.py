@@ -69,7 +69,7 @@ async def create_demand(
     **Buyer-only feature.**
 
     Buyer posts:
-    - Budget range (EUR and LEK)
+    - Budget range (EUR)
     - Category (restaurant, bar, etc.)
     - Preferred city and area
     - Description of what they're looking for

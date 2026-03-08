@@ -9,6 +9,7 @@ These dependencies are used to:
 - Check agent verification status
 """
 
+import hmac
 from typing import Annotated, Optional
 from fastapi import Depends, Request, status
 from fastapi.exceptions import HTTPException
@@ -191,7 +192,7 @@ async def verify_csrf_token(
     csrf_from_jwt = getattr(current_user, "_jwt_claims", {}).get("csrf")
 
     # Verify both exist and match
-    if not csrf_from_header or not csrf_from_jwt or csrf_from_header != csrf_from_jwt:
+    if not csrf_from_header or not csrf_from_jwt or not hmac.compare_digest(csrf_from_header, csrf_from_jwt):
         raise CSRFTokenInvalidException()
 
 

@@ -17,7 +17,7 @@ class DemandCreate(BaseModel):
     Schema for creating a buyer demand.
 
     Required:
-    - Budget range (dual currency: EUR and LEK)
+    - Budget range (EUR)
     - Category (restaurant, bar, cafe, etc.)
     - Preferred city
     - Description (min 20 characters)

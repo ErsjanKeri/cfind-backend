@@ -30,7 +30,7 @@ class Listing(Base):
     __tablename__ = "listings"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    agent_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    agent_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     country_code = Column(String(2), ForeignKey("countries.code"), nullable=False, default="al", index=True)
 
     # Status: "draft" | "active" | "sold" | "inactive"

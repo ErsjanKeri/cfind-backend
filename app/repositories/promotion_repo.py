@@ -21,6 +21,7 @@ import uuid
 from app.models.promotion import CreditPackage, PromotionTierConfig, CreditTransaction, PromotionHistory
 from app.models.listing import Listing
 from app.models.user import AgentProfile
+from app.core.exceptions import InsufficientCreditsException
 
 logger = logging.getLogger(__name__)
 
@@ -212,13 +213,26 @@ async def create_credit_transaction(
     db.add(transaction)
 
     # Update agent credit balance atomically
-    await db.execute(
-        update(AgentProfile)
-        .where(AgentProfile.user_id == agent_id)
-        .values(credit_balance=AgentProfile.credit_balance + amount)
-    )
+    if amount < 0:
+        # For deductions, only update if balance is sufficient (prevents race condition)
+        result = await db.execute(
+            update(AgentProfile)
+            .where(
+                AgentProfile.user_id == agent_id,
+                AgentProfile.credit_balance >= abs(amount)
+            )
+            .values(credit_balance=AgentProfile.credit_balance + amount)
+        )
+        if result.rowcount == 0:
+            raise InsufficientCreditsException(required=abs(amount), available=0)
+    else:
+        await db.execute(
+            update(AgentProfile)
+            .where(AgentProfile.user_id == agent_id)
+            .values(credit_balance=AgentProfile.credit_balance + amount)
+        )
 
-    await db.flush()  # Ensure transaction is created before returning
+    await db.flush()
 
     logger.info(f"Created credit transaction: agent={agent_id}, amount={amount}, type={transaction_type}")
     return transaction
@@ -230,7 +244,7 @@ async def create_credit_transaction(
 
 async def promote_listing(
     db: AsyncSession,
-    listing_id: str,
+    listing: Listing,
     tier: str,
     credit_cost: int,
     duration_days: int
@@ -249,30 +263,15 @@ async def promote_listing(
 
     Args:
         db: Database session
-        listing_id: Listing UUID
+        listing: Listing object (already fetched by caller)
         tier: "featured" | "premium"
         credit_cost: Credits deducted for this promotion
         duration_days: Promotion duration
 
     Returns:
         Tuple of (updated_listing, promotion_history)
-
-    Example:
-        >>> async with db.begin():
-        ...     # Deduct credits first
-        ...     listing, promo = await promote_listing(db, listing_id, "featured", 5, 30)
     """
-    # Fetch listing
-    result = await db.execute(
-        select(Listing).where(Listing.id == listing_id)
-    )
-    listing = result.scalar_one_or_none()
-
-    if not listing:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Listing not found"
-        )
+    listing_id = str(listing.id)
 
     # Calculate dates
     start_date = datetime.now(timezone.utc)

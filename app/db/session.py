@@ -1,14 +1,15 @@
 """Database session management."""
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy.pool import NullPool
 from app.config import settings
 
 # Create async engine
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.ENVIRONMENT == "development",
-    poolclass=NullPool,  # Disable connection pooling for async
+    pool_size=5,
+    max_overflow=10,
+    pool_pre_ping=True,
     future=True,
 )
 

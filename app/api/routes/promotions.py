@@ -67,7 +67,7 @@ async def get_credit_packages(
     Returns:
     - Package name (Starter, Basic, Standard, Pro, Agency)
     - Credits amount
-    - Price (EUR and LEK)
+    - Price (EUR)
     - Savings badge (e.g., "Save 33%")
     - Popular flag
     - Sort order
@@ -342,7 +342,7 @@ async def promote_listing(
 
     updated_listing, promotion = await promotion_repo.promote_listing(
         db=db,
-        listing_id=listing_id,
+        listing=listing,
         tier=target_tier,
         credit_cost=cost,
         duration_days=tier_config.duration_days

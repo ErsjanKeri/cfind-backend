@@ -5,6 +5,8 @@ Endpoints:
 - POST /register - Register new user (buyer or agent)
 """
 
+import logging
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -21,9 +23,10 @@ from app.models.token import EmailVerificationToken
 from app.schemas.auth import RegisterResponse
 from app.core.security import hash_password, generate_secure_token, validate_password_strength
 from app.services.email_service import send_verification_email
-from app.services.upload_service import upload_document_direct
+from app.services.upload_service import upload_document_direct, delete_old_image
 from app.core.constants import VALID_COUNTRY_CODES
 
+logger = logging.getLogger(__name__)
 limiter = Limiter(key_func=get_remote_address)
 router = APIRouter()
 
@@ -80,6 +83,11 @@ async def register(
 
     User must verify email before logging in.
     """
+    # Validate email format
+    email = email.strip().lower()
+    if not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid email address")
+
     # Validate role
     if role not in ["buyer", "agent"]:
         raise HTTPException(
@@ -93,14 +101,14 @@ async def register(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-    # Check if email already exists
+    # Check if email already exists (generic message to prevent email enumeration)
     existing = await db.execute(
         select(User).where(User.email == email)
     )
     if existing.scalar_one_or_none():
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered. Please use a different email or log in."
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists."
         )
 
     # Validate agent-specific fields
@@ -176,50 +184,56 @@ async def register(
     # Hash password
     hashed_password = hash_password(password)
 
-    # Create user
-    user = User(
-        id=user_id,
-        name=name,
-        email=email,
-        password=hashed_password,
-        role=role,
-        email_verified=False,
-        # Common fields (for both buyers and agents)
-        phone_number=phone,
-        company_name=company_name,
-    )
-    db.add(user)
-    await db.flush()  # Get user.id before creating profile
-
-    # Create agent profile (if agent)
-    if role == "agent":
-        agent_profile = AgentProfile(
-            user_id=user.id,
-            operating_country=operating_country,
-            license_number=license_number,
-            whatsapp_number=whatsapp,
-            bio_en=bio_en,
-            license_document_url=license_document_url,
-            company_document_url=company_document_url,
-            id_document_url=id_document_url,
-            verification_status="pending",
-            submitted_at=datetime.now(timezone.utc)
+    # Create user and related records; clean up S3 files on failure
+    uploaded_urls = [u for u in [license_document_url, company_document_url, id_document_url] if u]
+    try:
+        user = User(
+            id=user_id,
+            name=name,
+            email=email,
+            password=hashed_password,
+            role=role,
+            email_verified=False,
+            phone_number=phone,
+            company_name=company_name,
         )
-        db.add(agent_profile)
+        db.add(user)
+        await db.flush()
 
-    # Generate email verification token (24-hour validity)
-    token = generate_secure_token()
-    expires = datetime.now(timezone.utc) + timedelta(hours=24)
+        if role == "agent":
+            agent_profile = AgentProfile(
+                user_id=user.id,
+                operating_country=operating_country,
+                license_number=license_number,
+                whatsapp_number=whatsapp,
+                bio_en=bio_en,
+                license_document_url=license_document_url,
+                company_document_url=company_document_url,
+                id_document_url=id_document_url,
+                verification_status="pending",
+                submitted_at=datetime.now(timezone.utc)
+            )
+            db.add(agent_profile)
 
-    verification_token = EmailVerificationToken(
-        id=uuid.uuid4(),
-        user_id=user.id,
-        token=token,
-        expires=expires
-    )
-    db.add(verification_token)
+        token = generate_secure_token()
+        expires = datetime.now(timezone.utc) + timedelta(hours=24)
 
-    await db.commit()
+        verification_token = EmailVerificationToken(
+            id=uuid.uuid4(),
+            user_id=user.id,
+            token=token,
+            expires=expires
+        )
+        db.add(verification_token)
+
+        await db.commit()
+    except Exception:
+        for url in uploaded_urls:
+            try:
+                await delete_old_image(url)
+            except Exception as cleanup_err:
+                logger.warning(f"Failed to clean up S3 file {url}: {cleanup_err}")
+        raise
 
     # Send verification email
     await send_verification_email(

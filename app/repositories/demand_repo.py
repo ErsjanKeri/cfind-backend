@@ -84,13 +84,15 @@ async def create_demand(
     )
 
     db.add(demand)
+    demand_id = demand.id
     await db.commit()
 
-    # Load buyer relationship for response
+    # Re-fetch with buyer relationship (populate_existing forces reload from DB)
     result = await db.execute(
         select(BuyerDemand)
         .options(selectinload(BuyerDemand.buyer))
-        .where(BuyerDemand.id == demand.id)
+        .where(BuyerDemand.id == demand_id)
+        .execution_options(populate_existing=True)
     )
     demand = result.scalar_one()
 
@@ -380,6 +382,17 @@ async def update_demand_status(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Demand not found"
+        )
+
+    valid_transitions = {
+        "active": ["closed"],
+        "assigned": ["fulfilled", "closed"],
+    }
+    allowed = valid_transitions.get(demand.status, [])
+    if new_status not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot transition from '{demand.status}' to '{new_status}'"
         )
 
     demand.status = new_status

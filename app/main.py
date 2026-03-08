@@ -9,6 +9,7 @@ Initializes the FastAPI app with:
 - Error handlers
 """
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,17 +29,34 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ============================================================================
-# INITIALIZE FASTAPI APP
-# ============================================================================
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application startup and shutdown lifecycle."""
+    logger.info(f"Starting {settings.APP_NAME}")
+    logger.info(f"Environment: {settings.ENVIRONMENT}")
+    logger.info(f"CORS Origins: {settings.cors_origins_list}")
+    logger.info(f"JWT Algorithm: {settings.JWT_ALGORITHM}")
+    logger.info(f"Access Token Expiry: {settings.ACCESS_TOKEN_EXPIRE_MINUTES} minutes")
+    logger.info(f"Refresh Token Expiry: {settings.REFRESH_TOKEN_EXPIRE_DAYS} days")
+
+    from app.config import JWT_PRIVATE_KEY, JWT_PUBLIC_KEY
+    if not JWT_PRIVATE_KEY or not JWT_PUBLIC_KEY:
+        logger.warning("JWT keys not loaded! Run: bash scripts/generate_jwt_keys.sh")
+
+    yield
+
+    logger.info(f"Shutting down {settings.APP_NAME}")
+
 
 app = FastAPI(
     title=settings.APP_NAME,
     description="RESTful API for CompanyFinder Albania - Business acquisition marketplace platform",
     version="1.0.0",
-    docs_url="/docs" if settings.ENVIRONMENT == "development" else None,  # Disable docs in production
+    docs_url="/docs" if settings.ENVIRONMENT == "development" else None,
     redoc_url="/redoc" if settings.ENVIRONMENT == "development" else None,
     openapi_url="/openapi.json" if settings.ENVIRONMENT == "development" else None,
+    lifespan=lifespan,
 )
 
 # ============================================================================
@@ -224,36 +242,6 @@ app.include_router(
     prefix=settings.API_PREFIX,
     tags=["Cron Jobs"]
 )
-
-
-# ============================================================================
-# STARTUP & SHUTDOWN EVENTS
-# ============================================================================
-
-@app.on_event("startup")
-async def startup_event():
-    """
-    Actions to perform on application startup.
-    """
-    logger.info(f"Starting {settings.APP_NAME}")
-    logger.info(f"Environment: {settings.ENVIRONMENT}")
-    logger.info(f"CORS Origins: {settings.cors_origins_list}")
-    logger.info(f"JWT Algorithm: {settings.JWT_ALGORITHM}")
-    logger.info(f"Access Token Expiry: {settings.ACCESS_TOKEN_EXPIRE_MINUTES} minutes")
-    logger.info(f"Refresh Token Expiry: {settings.REFRESH_TOKEN_EXPIRE_DAYS} days")
-
-    # Log warning if JWT keys are missing
-    from app.config import JWT_PRIVATE_KEY, JWT_PUBLIC_KEY
-    if not JWT_PRIVATE_KEY or not JWT_PUBLIC_KEY:
-        logger.warning("JWT keys not loaded! Run: bash scripts/generate_jwt_keys.sh")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """
-    Actions to perform on application shutdown.
-    """
-    logger.info(f"Shutting down {settings.APP_NAME}")
 
 
 # ============================================================================

@@ -171,10 +171,22 @@ async def get_listing(
 
     listing, agent = result
 
+    is_owner = current_user and str(listing.agent_id) == str(current_user.id)
+    is_admin = current_user and current_user.role == "admin"
+
+    # Non-owner/non-admin: enforce visibility rules (active + approved agent)
+    if not is_owner and not is_admin:
+        agent_approved = agent.agent_profile and agent.agent_profile.verification_status == "approved"
+        if listing.status != "active" or not agent_approved:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found")
+
     # Owner or admin sees private view, everyone else sees public
-    if current_user and (str(listing.agent_id) == str(current_user.id) or current_user.role == "admin"):
+    if is_owner or is_admin:
         listing_dict = listing_repo.transform_private_listing(listing, agent)
     else:
+        await listing_repo.increment_view_count(db, listing.id)
+        result = await listing_repo.get_listing_by_id(db, listing_id, mode="public")
+        listing, agent = result
         listing_dict = listing_repo.transform_public_listing(listing, agent)
 
     return ListingGetResponse(
@@ -207,7 +219,7 @@ async def create_listing(
     - User must be verified agent with all documents uploaded
     - OR user is admin (can create on behalf of agents)
     - At least 1 image required
-    - Dual currency (EUR + LEK) required
+    - EUR pricing required
 
     **Auto-calculated fields:**
     - ROI: (monthly_revenue * 12) / asking_price * 100
@@ -300,6 +312,10 @@ async def update_listing(
     listing, agent = result
 
     ensure_owner_or_admin(listing.agent_id, current_user, "You are not authorized to update this listing")
+
+    # Strip admin-only fields from non-admin users
+    if current_user.role != "admin" and update_data.is_physically_verified is not None:
+        update_data.is_physically_verified = None
 
     # Update and return private view (reuse agent from initial fetch)
     updated_listing = await listing_repo.update_listing(db, listing_id, update_data)

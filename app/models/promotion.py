@@ -33,10 +33,10 @@ class CreditTransaction(Base):
     description = Column(String, nullable=False)
 
     # Reference to listing if this is a usage transaction
-    listing_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    listing_id = Column(UUID(as_uuid=True), ForeignKey("listings.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Reference to promotion if this is a usage transaction
-    promotion_id = Column(UUID(as_uuid=True), nullable=True)
+    promotion_id = Column(UUID(as_uuid=True), ForeignKey("promotion_history.id", ondelete="SET NULL"), nullable=True)
 
     # Payment reference for purchases (e.g., Stripe payment ID)
     payment_reference = Column(String, nullable=True)

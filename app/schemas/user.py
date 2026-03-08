@@ -1,7 +1,7 @@
 """Pydantic schemas for user profile operations."""
 
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
+from typing import List, Optional
 from datetime import datetime
 
 from app.schemas.base import BaseSchema
@@ -169,6 +169,8 @@ class DocumentUploadStatus(BaseModel):
     license_document_url: Optional[str] = None
     company_document_url: Optional[str] = None
     id_document_url: Optional[str] = None
+
+    missing: List[str] = []
 
 
 class DocumentUploadStatusResponse(BaseSchema):

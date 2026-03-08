@@ -39,7 +39,7 @@ class ListingCreate(BaseModel):
     Required:
     - Public information (what buyers see)
     - Private information (real business details)
-    - Financials (dual currency: EUR and LEK)
+    - Financials (EUR)
     - At least 1 image
 
     Optional:

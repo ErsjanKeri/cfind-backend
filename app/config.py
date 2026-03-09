@@ -89,6 +89,13 @@ class Settings(BaseSettings):
     CRON_SECRET: Optional[str] = None
 
     # ========================================================================
+    # AI AGENT (Gemini)
+    # ========================================================================
+    GEMINI_API_KEY: Optional[str] = None
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+    AGENT_MAX_MESSAGES_PER_DAY: int = 50
+
+    # ========================================================================
     # PYDANTIC SETTINGS CONFIG
     # ========================================================================
     model_config = SettingsConfigDict(

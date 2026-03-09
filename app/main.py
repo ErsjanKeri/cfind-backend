@@ -20,7 +20,7 @@ from slowapi.errors import RateLimitExceeded
 import logging
 
 from app.config import settings
-from app.api.routes import auth, users, upload, listings, leads, demands, promotions, admin, cron
+from app.api.routes import auth, users, upload, listings, leads, demands, promotions, admin, cron, chat
 
 # Configure logging
 logging.basicConfig(
@@ -241,6 +241,13 @@ app.include_router(
     cron.router,
     prefix=settings.API_PREFIX,
     tags=["Cron Jobs"]
+)
+
+# AI Agent chat routes
+app.include_router(
+    chat.router,
+    prefix=settings.API_PREFIX,
+    tags=["AI Agent"]
 )
 
 

@@ -15,6 +15,7 @@ from app.models.listing import Listing, ListingImage
 from app.models.lead import Lead, SavedListing
 from app.models.demand import BuyerDemand
 from app.models.promotion import CreditPackage, PromotionTierConfig, PromotionHistory, CreditTransaction
+from app.models.conversation import Conversation, Message
 
 # Export all models
 __all__ = [
@@ -35,4 +36,6 @@ __all__ = [
     "PromotionTierConfig",
     "PromotionHistory",
     "CreditTransaction",
+    "Conversation",
+    "Message",
 ]

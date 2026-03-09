@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.api.deps import get_verified_user
+from app.api.deps import RoleChecker
 from app.models.user import User
 from app.config import settings
 from app.repositories import chat_repo
@@ -26,7 +26,7 @@ router = APIRouter(prefix="/chat")
 @router.post("/message", response_model=ChatMessageResponse)
 async def send_message(
     body: ChatMessageRequest,
-    current_user: Annotated[User, Depends(get_verified_user)],
+    current_user: Annotated[User, Depends(RoleChecker(["buyer", "admin"]))],
     db: AsyncSession = Depends(get_db),
 ):
     """Send a message to the AI agent and get a response."""
@@ -91,7 +91,7 @@ async def send_message(
 
 @router.get("/conversations", response_model=list[ConversationSchema])
 async def list_conversations(
-    current_user: Annotated[User, Depends(get_verified_user)],
+    current_user: Annotated[User, Depends(RoleChecker(["buyer", "admin"]))],
     db: AsyncSession = Depends(get_db),
 ):
     """List user's conversations."""
@@ -102,7 +102,7 @@ async def list_conversations(
 @router.get("/conversations/{conversation_id}", response_model=ConversationDetailSchema)
 async def get_conversation(
     conversation_id: str,
-    current_user: Annotated[User, Depends(get_verified_user)],
+    current_user: Annotated[User, Depends(RoleChecker(["buyer", "admin"]))],
     db: AsyncSession = Depends(get_db),
 ):
     """Get a conversation with all messages."""
@@ -115,7 +115,7 @@ async def get_conversation(
 @router.delete("/conversations/{conversation_id}", status_code=204)
 async def delete_conversation(
     conversation_id: str,
-    current_user: Annotated[User, Depends(get_verified_user)],
+    current_user: Annotated[User, Depends(RoleChecker(["buyer", "admin"]))],
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a conversation."""

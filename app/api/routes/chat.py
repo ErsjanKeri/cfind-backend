@@ -2,14 +2,12 @@
 
 import logging
 from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
-from app.api.deps import RoleChecker
+from app.api.deps import RoleChecker, verify_csrf_token
 from app.models.user import User
 from app.models.lead import SavedListing
 from app.models.listing import Listing
@@ -33,6 +31,7 @@ async def send_message(
     body: ChatMessageRequest,
     current_user: Annotated[User, Depends(RoleChecker(["buyer", "admin"]))],
     db: AsyncSession = Depends(get_db),
+    _: None = Depends(verify_csrf_token),
 ):
     """Send a message to the AI agent and get a response."""
     if not settings.GEMINI_API_KEY:
@@ -142,6 +141,7 @@ async def delete_conversation(
     conversation_id: str,
     current_user: Annotated[User, Depends(RoleChecker(["buyer", "admin"]))],
     db: AsyncSession = Depends(get_db),
+    _: None = Depends(verify_csrf_token),
 ):
     """Delete a conversation."""
     deleted = await chat_repo.delete_conversation(db, conversation_id, str(current_user.id))

@@ -2,7 +2,7 @@
 
 import logging
 from typing import Optional
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete
 from sqlalchemy.orm import selectinload

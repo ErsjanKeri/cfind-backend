@@ -137,7 +137,7 @@ def _get_client() -> genai.Client:
 
 async def _execute_search_listings(db: AsyncSession, args: dict) -> dict:
     """Execute search_listings tool against the database."""
-    from sqlalchemy import case, desc, asc
+    from sqlalchemy import desc, asc
 
     country_code = args.get("country_code", "al")
     category = args.get("category")

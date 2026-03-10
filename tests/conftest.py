@@ -206,12 +206,14 @@ async def client():
 
     # Disable ALL rate limiters — each auth route file creates its own Limiter instance
     from app.api.routes.auth import registration, session, password, verification
+    from app.api.routes import chat
     all_limiters = [
         app.state.limiter,
         registration.limiter,
         session.limiter,
         password.limiter,
         verification.limiter,
+        chat.limiter,
     ]
     for lim in all_limiters:
         lim.enabled = False

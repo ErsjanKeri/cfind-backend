@@ -2,9 +2,11 @@
 
 import logging
 from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.db.session import get_db
 from app.api.deps import RoleChecker, verify_csrf_token
@@ -23,11 +25,14 @@ from app.schemas.chat import (
 
 logger = logging.getLogger(__name__)
 
+limiter = Limiter(key_func=get_remote_address)
 router = APIRouter(prefix="/chat")
 
 
 @router.post("/message", response_model=ChatMessageResponse)
+@limiter.limit("6/minute")
 async def send_message(
+    request: Request,
     body: ChatMessageRequest,
     current_user: Annotated[User, Depends(RoleChecker(["buyer", "admin"]))],
     db: AsyncSession = Depends(get_db),

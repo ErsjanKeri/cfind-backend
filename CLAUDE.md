@@ -41,7 +41,7 @@ pytest test_file.py -v
 ### Request Flow
 Routes (`app/api/routes/`) call repos (`app/repositories/`) directly. **No service layer in between.**
 
-Services (`app/services/`) exist only for cross-cutting concerns: email (`email_service.py`), file uploads (`upload_service.py`).
+Services (`app/services/`) exist only for cross-cutting concerns: email (`email_service.py`), file uploads (`upload_service.py`), AI agent (`agent_service.py`).
 
 ### Auth Dependency Chain
 Dependencies in `app/api/deps.py` chain in order:
@@ -75,4 +75,32 @@ All routers registered in `app/main.py` with `prefix=settings.API_PREFIX` (`/api
 - Storage: DigitalOcean Spaces (S3-compatible, boto3) via `app/utils/s3_client.py`
 - Email: ZeptoMail via SMTP
 - Rate limiting: SlowAPI
+- AI: Google Gemini 2.5 Flash via `google-genai` SDK (function calling for listing search)
 - Deploy: DigitalOcean App Platform (Dockerfile, auto-deploy on push to main)
+
+## AI Agent (Chat)
+
+The AI recommendation agent lives in `app/services/agent_service.py` and is accessed via `app/api/routes/chat.py` (prefix `/chat`).
+
+### How it works
+- Uses Gemini function calling with 3 tool declarations: `search_listings`, `get_listing_detail`, `get_market_info`
+- Tool calls execute real DB queries against the Listing model, then results are fed back to Gemini for a conversational response
+- Tool call results (including listing data) are stored in the `tool_calls` JSON column on messages so the frontend can render listing cards
+- User context (country preference + saved listing titles) is injected into the system prompt for personalized recommendations
+
+### Key files
+- `app/services/agent_service.py` — Gemini client, tool declarations, tool executors, chat loop
+- `app/api/routes/chat.py` — REST endpoints (POST `/message`, GET/DELETE `/conversations`)
+- `app/repositories/chat_repo.py` — Conversation/Message CRUD
+- `app/models/conversation.py` — Conversation + Message SQLAlchemy models
+- `app/schemas/chat.py` — Pydantic request/response schemas
+
+### Access control
+- Restricted to `buyer` and `admin` roles via `RoleChecker(["buyer", "admin"])`
+- State-changing endpoints (send message, delete conversation) require CSRF token
+- Daily message limit configured via `AGENT_MAX_MESSAGES_PER_DAY` setting
+
+### Config
+- `GEMINI_API_KEY` — Google AI API key (required, set as SECRET in DigitalOcean)
+- `GEMINI_MODEL` — Model name (default: `gemini-2.5-flash`)
+- `AGENT_MAX_MESSAGES_PER_DAY` — Daily user message limit (default: 50)

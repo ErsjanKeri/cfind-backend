@@ -34,13 +34,19 @@ router = APIRouter(prefix="/chat")
 async def send_message(
     request: Request,
     body: ChatMessageRequest,
-    current_user: Annotated[User, Depends(RoleChecker(["buyer", "admin"]))],
+    current_user: Annotated[User, Depends(RoleChecker(["buyer", "agent", "admin"]))],
     db: AsyncSession = Depends(get_db),
     _: None = Depends(verify_csrf_token),
 ):
     """Send a message to the AI agent and get a response."""
     if not settings.GEMINI_API_KEY:
         raise HTTPException(status_code=503, detail="AI agent is not configured")
+
+    # Validate mode matches role
+    if body.mode == "agent" and current_user.role not in ("agent", "admin"):
+        raise HTTPException(status_code=403, detail="Agent mode requires agent role")
+    if body.mode == "buyer" and current_user.role not in ("buyer", "admin"):
+        raise HTTPException(status_code=403, detail="Buyer mode requires buyer role")
 
     # Check daily message limit
     today_count = await chat_repo.count_user_messages_today(db, str(current_user.id))
@@ -74,7 +80,7 @@ async def send_message(
     # Reload conversation with all messages for context
     conversation = await chat_repo.get_conversation(db, str(conversation.id), str(current_user.id))
 
-    # Build user context for personalized recommendations
+    # Build user context
     user_context = {}
     country_name_map = {"al": "Albania", "ae": "United Arab Emirates"}
     if current_user.country_preference:
@@ -82,16 +88,17 @@ async def send_message(
             current_user.country_preference, current_user.country_preference
         )
 
-    # Fetch saved listing titles
-    saved_result = await db.execute(
-        select(Listing.public_title_en)
-        .join(SavedListing, SavedListing.listing_id == Listing.id)
-        .where(SavedListing.buyer_id == current_user.id)
-        .limit(10)
-    )
-    saved_titles = [row[0] for row in saved_result.all() if row[0]]
-    if saved_titles:
-        user_context["saved_listings"] = saved_titles
+    if body.mode == "buyer":
+        # Fetch saved listing titles for buyer context
+        saved_result = await db.execute(
+            select(Listing.public_title_en)
+            .join(SavedListing, SavedListing.listing_id == Listing.id)
+            .where(SavedListing.buyer_id == current_user.id)
+            .limit(10)
+        )
+        saved_titles = [row[0] for row in saved_result.all() if row[0]]
+        if saved_titles:
+            user_context["saved_listings"] = saved_titles
 
     # Get AI response
     previous_messages = conversation.messages[:-1] if len(conversation.messages) > 1 else []
@@ -102,6 +109,8 @@ async def send_message(
         conversation_messages=previous_messages,
         language=conversation.language,
         user_context=user_context if user_context else None,
+        mode=body.mode,
+        agent_id=str(current_user.id) if body.mode == "agent" else None,
     )
 
     # Save model response
@@ -120,7 +129,7 @@ async def send_message(
 
 @router.get("/conversations", response_model=list[ConversationSchema])
 async def list_conversations(
-    current_user: Annotated[User, Depends(RoleChecker(["buyer", "admin"]))],
+    current_user: Annotated[User, Depends(RoleChecker(["buyer", "agent", "admin"]))],
     db: AsyncSession = Depends(get_db),
 ):
     """List user's conversations."""
@@ -131,7 +140,7 @@ async def list_conversations(
 @router.get("/conversations/{conversation_id}", response_model=ConversationDetailSchema)
 async def get_conversation(
     conversation_id: str,
-    current_user: Annotated[User, Depends(RoleChecker(["buyer", "admin"]))],
+    current_user: Annotated[User, Depends(RoleChecker(["buyer", "agent", "admin"]))],
     db: AsyncSession = Depends(get_db),
 ):
     """Get a conversation with all messages."""
@@ -144,7 +153,7 @@ async def get_conversation(
 @router.delete("/conversations/{conversation_id}", status_code=204)
 async def delete_conversation(
     conversation_id: str,
-    current_user: Annotated[User, Depends(RoleChecker(["buyer", "admin"]))],
+    current_user: Annotated[User, Depends(RoleChecker(["buyer", "agent", "admin"]))],
     db: AsyncSession = Depends(get_db),
     _: None = Depends(verify_csrf_token),
 ):

@@ -11,6 +11,7 @@ class ChatMessageRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=2000)
     conversation_id: Optional[str] = None  # None = new conversation
     language: str = Field(default="en", max_length=10)
+    mode: str = Field(default="buyer", pattern="^(buyer|agent)$")
 
 
 class ChatMessageResponse(BaseSchema):

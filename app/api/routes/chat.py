@@ -5,9 +5,14 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+
 from app.db.session import get_db
 from app.api.deps import RoleChecker
 from app.models.user import User
+from app.models.lead import SavedListing
+from app.models.listing import Listing
 from app.config import settings
 from app.repositories import chat_repo
 from app.services import agent_service
@@ -65,7 +70,26 @@ async def send_message(
     # Reload conversation with all messages for context
     conversation = await chat_repo.get_conversation(db, str(conversation.id), str(current_user.id))
 
-    # Get AI response (pass all previous messages except the last user message for history)
+    # Build user context for personalized recommendations
+    user_context = {}
+    country_name_map = {"al": "Albania", "ae": "United Arab Emirates"}
+    if current_user.country_preference:
+        user_context["country"] = country_name_map.get(
+            current_user.country_preference, current_user.country_preference
+        )
+
+    # Fetch saved listing titles
+    saved_result = await db.execute(
+        select(Listing.public_title_en)
+        .join(SavedListing, SavedListing.listing_id == Listing.id)
+        .where(SavedListing.buyer_id == current_user.id)
+        .limit(10)
+    )
+    saved_titles = [row[0] for row in saved_result.all() if row[0]]
+    if saved_titles:
+        user_context["saved_listings"] = saved_titles
+
+    # Get AI response
     previous_messages = conversation.messages[:-1] if len(conversation.messages) > 1 else []
 
     response_text, tool_calls = await agent_service.chat(
@@ -73,6 +97,7 @@ async def send_message(
         user_message=body.message,
         conversation_messages=previous_messages,
         language=conversation.language,
+        user_context=user_context if user_context else None,
     )
 
     # Save model response

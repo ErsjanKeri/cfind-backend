@@ -152,7 +152,7 @@ async def _execute_search_listings(db: AsyncSession, args: dict) -> dict:
         select(Listing, User)
         .join(User, Listing.agent_id == User.id)
         .join(AgentProfile, User.id == AgentProfile.user_id)
-        .options(selectinload(User.agent_profile))
+        .options(selectinload(User.agent_profile), selectinload(Listing.images))
         .where(
             and_(
                 Listing.country_code == country_code,
@@ -199,18 +199,26 @@ async def _execute_search_listings(db: AsyncSession, args: dict) -> dict:
 
     listings = []
     for listing, agent in rows:
+        # Get first image URL for card display
+        first_image = None
+        if listing.images:
+            sorted_imgs = sorted(listing.images, key=lambda i: i.order)
+            first_image = sorted_imgs[0].url if sorted_imgs else None
+
         item = {
             "id": str(listing.id),
             "title": listing.public_title_en,
             "category": listing.category,
             "city": listing.public_location_city_en,
             "area": listing.public_location_area,
+            "country_code": country_code,
             "asking_price_eur": float(listing.asking_price_eur) if listing.asking_price_eur else None,
             "monthly_revenue_eur": float(listing.monthly_revenue_eur) if listing.monthly_revenue_eur else None,
             "roi": float(listing.roi) if listing.roi else None,
             "employee_count": listing.employee_count,
             "years_in_operation": listing.years_in_operation,
             "promotion_tier": listing.promotion_tier,
+            "image_url": first_image,
             "agent_name": agent.name,
             "agent_agency": agent.company_name,
             "url": f"{settings.APP_URL}/{country_code}/listings/{listing.id}",
@@ -242,6 +250,11 @@ async def _execute_get_listing_detail(db: AsyncSession, args: dict) -> dict:
     listing, agent = row
     country_code = listing.country_code or "al"
 
+    first_image = None
+    if listing.images:
+        sorted_imgs = sorted(listing.images, key=lambda i: i.order)
+        first_image = sorted_imgs[0].url if sorted_imgs else None
+
     return {
         "id": str(listing.id),
         "title": listing.public_title_en,
@@ -249,6 +262,7 @@ async def _execute_get_listing_detail(db: AsyncSession, args: dict) -> dict:
         "category": listing.category,
         "city": listing.public_location_city_en,
         "area": listing.public_location_area,
+        "country_code": country_code,
         "country": "Albania" if country_code == "al" else "United Arab Emirates",
         "status": listing.status,
         "asking_price_eur": float(listing.asking_price_eur) if listing.asking_price_eur else None,
@@ -260,6 +274,7 @@ async def _execute_get_listing_detail(db: AsyncSession, args: dict) -> dict:
         "is_physically_verified": listing.is_physically_verified,
         "promotion_tier": listing.promotion_tier,
         "view_count": listing.view_count,
+        "image_url": first_image,
         "images": len(listing.images) if listing.images else 0,
         "agent_name": agent.name,
         "agent_agency": agent.company_name,
@@ -318,17 +333,17 @@ async def chat(
     user_message: str,
     conversation_messages: list,
     language: str = "en",
+    user_context: Optional[dict] = None,
 ) -> tuple[str, Optional[list]]:
     """
     Send a message to the AI agent and get a response.
 
     Returns:
-        tuple of (response_text, tool_calls_made)
+        tuple of (response_text, tool_calls_with_results)
     """
     client = _get_client()
     history = build_history(conversation_messages)
 
-    # Add the new user message
     history.append(types.Content(
         role="user",
         parts=[types.Part.from_text(text=user_message)],
@@ -336,8 +351,20 @@ async def chat(
 
     lang_instruction = f"\nThe user's preferred language is: {language}. Respond in that language." if language != "en" else ""
 
+    # Inject user context so the AI knows who it's talking to
+    context_instruction = ""
+    if user_context:
+        parts = []
+        if user_context.get("country"):
+            parts.append(f"- Preferred country: {user_context['country']}")
+        if user_context.get("saved_listings"):
+            titles = ", ".join(user_context["saved_listings"][:10])
+            parts.append(f"- Saved/favorited listings: {titles}")
+        if parts:
+            context_instruction = "\n\nAbout this buyer:\n" + "\n".join(parts) + "\nUse this context to personalize your recommendations. If the user doesn't specify a country, default to their preferred country."
+
     config = types.GenerateContentConfig(
-        system_instruction=SYSTEM_INSTRUCTION + lang_instruction,
+        system_instruction=SYSTEM_INSTRUCTION + lang_instruction + context_instruction,
         tools=TOOLS,
         temperature=0.7,
         max_output_tokens=2048,
@@ -345,7 +372,6 @@ async def chat(
 
     all_tool_calls = []
 
-    # Tool calling loop — max 5 rounds to prevent infinite loops
     for _ in range(5):
         response = await client.aio.models.generate_content(
             model=settings.GEMINI_MODEL,
@@ -357,7 +383,6 @@ async def chat(
         if not candidate:
             return "I'm sorry, I couldn't process that request. Please try again.", None
 
-        # Check if the model wants to call a function
         function_calls = []
         text_parts = []
         for part in candidate.content.parts:
@@ -367,20 +392,24 @@ async def chat(
                 text_parts.append(part.text)
 
         if not function_calls:
-            # No more tool calls — return the text response
             final_text = "".join(text_parts) if text_parts else "I couldn't generate a response. Please try again."
             return final_text, all_tool_calls if all_tool_calls else None
 
-        # Execute each function call and build responses
         history.append(candidate.content)
 
         function_response_parts = []
         for fc in function_calls:
             tool_args = dict(fc.args) if fc.args else {}
-            all_tool_calls.append({"name": fc.name, "args": tool_args})
 
             logger.info(f"Agent tool call: {fc.name}({tool_args})")
             result = await execute_tool(db, fc.name, tool_args)
+
+            # Store both args and results so the frontend can render listing cards
+            all_tool_calls.append({
+                "name": fc.name,
+                "args": tool_args,
+                "result": result,
+            })
 
             function_response_parts.append(
                 types.Part.from_function_response(
@@ -394,5 +423,4 @@ async def chat(
             parts=function_response_parts,
         ))
 
-    # If we exit the loop, the model called too many tools
     return "I ran into an issue processing your request. Could you try rephrasing?", all_tool_calls

@@ -57,14 +57,14 @@ async def send_message(
             db, str(current_user.id), language=body.language,
         )
 
-    # Save user message
-    await chat_repo.add_message(db, str(conversation.id), "user", body.message)
-    await chat_repo.increment_message_count(db, str(conversation.id))
-
-    # Set conversation title from first message
+    # Set conversation title from first message (before incrementing count)
     if conversation.message_count == 0:
         title = body.message[:100]
         await chat_repo.update_conversation_title(db, str(conversation.id), title)
+
+    # Save user message
+    await chat_repo.add_message(db, str(conversation.id), "user", body.message)
+    await chat_repo.increment_message_count(db, str(conversation.id))
 
     # Reload conversation with all messages for context
     conversation = await chat_repo.get_conversation(db, str(conversation.id), str(current_user.id))

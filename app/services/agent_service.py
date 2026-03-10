@@ -237,11 +237,16 @@ async def _execute_get_listing_detail(db: AsyncSession, args: dict) -> dict:
     result = await db.execute(
         select(Listing, User)
         .join(User, Listing.agent_id == User.id)
+        .join(AgentProfile, User.id == AgentProfile.user_id)
         .options(
             selectinload(Listing.images),
             selectinload(User.agent_profile),
         )
-        .where(Listing.id == listing_id)
+        .where(
+            Listing.id == listing_id,
+            Listing.status == "active",
+            AgentProfile.verification_status == "approved",
+        )
     )
     row = result.first()
     if not row:
@@ -278,9 +283,6 @@ async def _execute_get_listing_detail(db: AsyncSession, args: dict) -> dict:
         "images": len(listing.images) if listing.images else 0,
         "agent_name": agent.name,
         "agent_agency": agent.company_name,
-        "agent_phone": agent.phone_number,
-        "agent_whatsapp": agent.agent_profile.whatsapp_number if agent.agent_profile else None,
-        "agent_email": agent.email,
         "url": f"{settings.APP_URL}/{country_code}/listings/{listing.id}",
     }
 
@@ -373,14 +375,21 @@ async def chat(
     all_tool_calls = []
 
     for _ in range(5):
-        response = await client.aio.models.generate_content(
-            model=settings.GEMINI_MODEL,
-            contents=history,
-            config=config,
-        )
+        try:
+            response = await client.aio.models.generate_content(
+                model=settings.GEMINI_MODEL,
+                contents=history,
+                config=config,
+            )
+        except Exception as e:
+            logger.error(f"Gemini API error: {e}")
+            return "I'm sorry, the AI service is temporarily unavailable. Please try again later.", None
 
         candidate = response.candidates[0] if response.candidates else None
         if not candidate:
+            return "I'm sorry, I couldn't process that request. Please try again.", None
+
+        if not candidate.content or not candidate.content.parts:
             return "I'm sorry, I couldn't process that request. Please try again.", None
 
         function_calls = []

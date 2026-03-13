@@ -12,6 +12,7 @@ Endpoints:
 from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
 from app.db.session import get_db
 from app.models.user import User
@@ -79,14 +80,17 @@ async def create_lead(
     if listing.status != "active":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot contact agent for inactive listing")
 
-    # Check deduplication
+    # Check deduplication (fast path)
     buyer_id = str(current_user.id)
     exists = await lead_repo.check_lead_exists(db, buyer_id, lead_data.listing_id, lead_data.interaction_type)
     if exists:
         raise LeadAlreadyExistsException()
 
-    # Create lead
-    lead = await lead_repo.create_lead(db, buyer_id, lead_data.listing_id, str(listing.agent_id), lead_data.interaction_type)
+    # Create lead (IntegrityError catches race condition if two requests pass the check simultaneously)
+    try:
+        lead = await lead_repo.create_lead(db, buyer_id, lead_data.listing_id, str(listing.agent_id), lead_data.interaction_type)
+    except IntegrityError:
+        raise LeadAlreadyExistsException()
 
     return LeadCreateResponse(
         success=True,

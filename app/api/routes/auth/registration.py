@@ -224,12 +224,15 @@ async def register(
                 logger.warning(f"Failed to clean up S3 file {url}: {cleanup_err}")
         raise
 
-    # Send verification email
-    await send_verification_email(
-        to_email=user.email,
-        user_name=user.name,
-        verification_token=token
-    )
+    # Send verification email (don't fail registration if email service is down)
+    try:
+        await send_verification_email(
+            to_email=user.email,
+            user_name=user.name,
+            verification_token=token
+        )
+    except Exception as e:
+        logger.error(f"Failed to send verification email to {user.email}: {e}")
 
     return RegisterResponse(
         success=True,

@@ -33,8 +33,10 @@ from app.api.deps import (
     verify_csrf_token,
     RoleChecker
 )
-from app.repositories import user_repo
+from app.repositories import user_repo, auth_repo
 from app.services.upload_service import upload_image_direct, upload_document_direct, delete_old_image
+from app.services.email_service import send_verification_email
+from app.core.security import generate_secure_token
 
 logger = logging.getLogger(__name__)
 
@@ -91,15 +93,35 @@ async def update_user_profile(
     - New verification email is sent
     """
     try:
-        updated_user = await user_repo.update_user_basic_info(db, str(current_user.id), update_data)
+        updated_user, email_changed = await user_repo.update_user_basic_info(db, str(current_user.id), update_data)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     if not updated_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
+    # Send verification email for new address
+    if email_changed:
+        from datetime import datetime, timedelta, timezone
+        await auth_repo.delete_user_verification_tokens(db, updated_user.id)
+        token = generate_secure_token()
+        expires = datetime.now(timezone.utc) + timedelta(hours=24)
+        await auth_repo.create_verification_token(db, updated_user.id, token, expires)
+        try:
+            await send_verification_email(
+                to_email=updated_user.email,
+                user_name=updated_user.name,
+                verification_token=token
+            )
+        except Exception as e:
+            logger.error(f"Failed to send verification email to {updated_user.email}: {e}")
+
+    message = "Profile updated successfully"
+    if email_changed:
+        message += ". A verification email has been sent to your new email address."
+
     return UserProfileUpdateResponse(
         success=True,
-        message="Profile updated successfully",
+        message=message,
         user=updated_user
     )
 
@@ -137,7 +159,7 @@ async def upload_profile_image(
         await delete_old_image(current_user.image)
 
     # Update user record (user is authenticated, so profile should exist)
-    await user_repo.update_user_basic_info(db, str(current_user.id), UserProfileUpdate(image=image_url))
+    await user_repo.update_user_basic_info(db, str(current_user.id), UserProfileUpdate(image=image_url))  # email_changed always False here
 
     return ImageUploadResponse(
         success=True,

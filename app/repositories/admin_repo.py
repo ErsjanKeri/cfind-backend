@@ -192,19 +192,17 @@ async def get_platform_stats(db: AsyncSession) -> PlatformStats:
 
 async def get_all_users(
     db: AsyncSession,
-    role_filter: Optional[str] = None
-) -> List[UserListItem]:
+    role_filter: Optional[str] = None,
+    page: int = 1,
+    limit: int = 20
+) -> tuple[List[UserListItem], int]:
     """
-    Get all users with optional role filter.
-
-    Args:
-        db: Database session
-        role_filter: Optional role filter ("buyer" | "agent" | "admin")
+    Get paginated users with optional role filter.
 
     Returns:
-        List of UserListItem models
+        Tuple of (users_list, total_count)
     """
-    query = (
+    base_query = (
         select(User)
         .options(
             selectinload(User.agent_profile),
@@ -212,11 +210,16 @@ async def get_all_users(
     )
 
     if role_filter:
-        query = query.where(User.role == role_filter)
+        base_query = base_query.where(User.role == role_filter)
 
-    query = query.order_by(User.created_at.desc())
+    base_query = base_query.order_by(User.created_at.desc())
 
-    result = await db.execute(query)
+    count_query = select(func.count()).select_from(base_query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar()
+
+    offset = (page - 1) * limit
+    result = await db.execute(base_query.offset(offset).limit(limit))
     users = result.scalars().all()
 
     users_list = []
@@ -236,8 +239,8 @@ async def get_all_users(
             })
         users_list.append(item)
 
-    logger.info(f"Fetched {len(users_list)} users (role filter: {role_filter})")
-    return users_list
+    logger.info(f"Fetched {len(users_list)} users (role filter: {role_filter}, page {page}, total: {total})")
+    return users_list, total
 
 
 # ============================================================================

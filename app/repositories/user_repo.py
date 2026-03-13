@@ -95,7 +95,7 @@ async def update_user_basic_info(
     db: AsyncSession,
     user_id: str,
     update_data: UserProfileUpdate
-) -> User:
+) -> tuple[User, bool]:
     """
     Update user's basic information (name, email, image).
 
@@ -113,18 +113,19 @@ async def update_user_basic_info(
     # Fetch user
     user = await get_user_by_id(db, user_id, include_profiles=True)
     if not user:
-        return None
+        return None, False
 
     # Check if email is being changed and already exists
+    email_changed = False
     if update_data.email and update_data.email != user.email:
         existing = await get_user_by_email(db, update_data.email)
         if existing:
             raise ValueError("Email already in use by another account")
 
-        # Email changed - reset verification
+        # Email changed - reset verification (caller sends verification email)
         user.email = update_data.email
         user.email_verified = False
-        # TODO: Send new verification email
+        email_changed = True
 
     # Update fields
     if update_data.name is not None:
@@ -161,8 +162,8 @@ async def update_user_basic_info(
     )
     user = result.scalar_one()
 
-    logger.info(f"Updated user basic info: {user_id}")
-    return user
+    logger.info(f"Updated user basic info: {user_id}, email_changed: {email_changed}")
+    return user, email_changed
 
 
 # ============================================================================

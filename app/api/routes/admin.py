@@ -11,6 +11,11 @@ Endpoints:
 - POST /admin/agents/{agent_id}/reject - Reject agent
 - POST /admin/users/{user_id}/toggle-email-verification - Toggle email verification
 - POST /admin/credits/adjust - Adjust agent credits
+- POST /admin/geography/{country_code}/cities - Create city
+- PUT /admin/geography/cities/{city_id} - Update city
+- DELETE /admin/geography/cities/{city_id} - Delete city
+- POST /admin/geography/cities/{city_id}/neighbourhoods - Create neighbourhood
+- DELETE /admin/geography/neighbourhoods/{neighbourhood_id} - Delete neighbourhood
 """
 
 import logging
@@ -36,8 +41,14 @@ from app.api.deps import (
     RoleChecker,
     verify_csrf_token
 )
+from app.schemas.geography import (
+    CreateCityRequest, UpdateCityRequest, AdminCityResponse,
+    CreateNeighbourhoodRequest, AdminNeighbourhoodResponse,
+    AdminGeographyResponse, CityResponse, NeighbourhoodResponse,
+)
 from app.repositories import admin_repo
 from app.repositories.user_repo import get_user_by_id
+from app.repositories import geography_repo
 from app.services.email_service import send_agent_rejection_email
 from app.repositories import promotion_repo
 from app.core.constants import VALID_COUNTRY_CODES
@@ -99,31 +110,20 @@ async def get_platform_stats(
 async def get_all_users(
     current_user: Annotated[User, Depends(RoleChecker(["admin"]))],
     db: AsyncSession = Depends(get_db),
-    role: Optional[str] = Query(None, pattern="^(buyer|agent|admin)$", description="Filter by role")
+    role: Optional[str] = Query(None, pattern="^(buyer|agent|admin)$", description="Filter by role"),
+    page: int = Query(default=1, ge=1, description="Page number"),
+    limit: int = Query(default=20, ge=1, le=100, description="Items per page"),
 ):
-    """
-    Get all users.
-
-    **Admin-only endpoint.**
-
-    **Optional filters:**
-    - role: Filter by buyer, agent, or admin
-
-    **Returns:**
-    - User basic info (id, name, email, role)
-    - Email verification status
-    - Agent verification status (if agent)
-    - Agency name (if agent)
-    - Credit balance (if agent)
-
-    **Use case:**
-    Admin views all platform users for management.
-    """
-    users = await admin_repo.get_all_users(db, role)
+    """Get all users with optional role filter and pagination."""
+    users, total = await admin_repo.get_all_users(db, role, page=page, limit=limit)
+    total_pages = (total + limit - 1) // limit
 
     return AdminUsersListResponse(
         success=True,
-        total=len(users),
+        total=total,
+        page=page,
+        limit=limit,
+        total_pages=total_pages,
         users=users
     )
 
@@ -477,3 +477,104 @@ async def adjust_agent_credits(
         new_balance=new_balance,
         transaction=CreditTransactionResponse.model_validate(transaction)
     )
+
+
+@router.post(
+    "/geography/{country_code}/cities",
+    response_model=AdminCityResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create city",
+)
+async def create_city(
+    country_code: str,
+    data: CreateCityRequest,
+    current_user: Annotated[User, Depends(RoleChecker(["admin"]))],
+    _: None = Depends(verify_csrf_token),
+    db: AsyncSession = Depends(get_db),
+):
+    country = await geography_repo.get_country_by_code(db, country_code)
+    if not country:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Country not found")
+    city = await geography_repo.create_city(db, country_code, data.name)
+    return AdminCityResponse(
+        message="City created successfully",
+        city=CityResponse.model_validate(city),
+    )
+
+
+@router.put(
+    "/geography/cities/{city_id}",
+    response_model=AdminCityResponse,
+    summary="Update city",
+)
+async def update_city(
+    city_id: int,
+    data: UpdateCityRequest,
+    current_user: Annotated[User, Depends(RoleChecker(["admin"]))],
+    _: None = Depends(verify_csrf_token),
+    db: AsyncSession = Depends(get_db),
+):
+    city = await geography_repo.update_city(db, city_id, data.name)
+    if not city:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="City not found")
+    return AdminCityResponse(
+        message="City updated successfully",
+        city=CityResponse.model_validate(city),
+    )
+
+
+@router.delete(
+    "/geography/cities/{city_id}",
+    response_model=AdminGeographyResponse,
+    summary="Delete city",
+)
+async def delete_city(
+    city_id: int,
+    current_user: Annotated[User, Depends(RoleChecker(["admin"]))],
+    _: None = Depends(verify_csrf_token),
+    db: AsyncSession = Depends(get_db),
+):
+    deleted = await geography_repo.delete_city(db, city_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="City not found")
+    return AdminGeographyResponse(message="City deleted successfully")
+
+
+@router.post(
+    "/geography/cities/{city_id}/neighbourhoods",
+    response_model=AdminNeighbourhoodResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create neighbourhood",
+)
+async def create_neighbourhood(
+    city_id: int,
+    data: CreateNeighbourhoodRequest,
+    current_user: Annotated[User, Depends(RoleChecker(["admin"]))],
+    _: None = Depends(verify_csrf_token),
+    db: AsyncSession = Depends(get_db),
+):
+    city = await geography_repo.get_city_by_id(db, city_id)
+    if not city:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="City not found")
+    neighbourhood = await geography_repo.create_neighbourhood(db, city_id, data.name)
+    return AdminNeighbourhoodResponse(
+        message="Neighbourhood created successfully",
+        neighbourhood=NeighbourhoodResponse.model_validate(neighbourhood),
+    )
+
+
+@router.delete(
+    "/geography/neighbourhoods/{neighbourhood_id}",
+    response_model=AdminGeographyResponse,
+    summary="Delete neighbourhood",
+)
+async def delete_neighbourhood(
+    neighbourhood_id: int,
+    current_user: Annotated[User, Depends(RoleChecker(["admin"]))],
+    _: None = Depends(verify_csrf_token),
+    db: AsyncSession = Depends(get_db),
+):
+    deleted = await geography_repo.delete_neighbourhood(db, neighbourhood_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Neighbourhood not found")
+    return AdminGeographyResponse(message="Neighbourhood deleted successfully")

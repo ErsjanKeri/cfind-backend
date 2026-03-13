@@ -70,7 +70,7 @@ class BuyerDemand(Base):
     # ========================================================================
     # EXCLUSIVE ASSIGNMENT
     # ========================================================================
-    assigned_agent_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
+    assigned_agent_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     assigned_at = Column(DateTime(timezone=True), nullable=True)
 
     # ========================================================================

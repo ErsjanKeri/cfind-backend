@@ -13,6 +13,7 @@ from app.models.listing import Listing
 from app.models.demand import BuyerDemand
 from app.models.user import User, AgentProfile
 from app.models.country import Country
+from app.repositories.listing_repo import _escape_like
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,14 @@ TOOL_DECLARATIONS = [
                     "type": "number",
                     "description": "Minimum ROI percentage.",
                 },
+                "max_roi": {
+                    "type": "number",
+                    "description": "Maximum ROI percentage.",
+                },
+                "area": {
+                    "type": "string",
+                    "description": "Area/neighbourhood filter within a city.",
+                },
                 "search": {
                     "type": "string",
                     "description": "Free-text search across title, description, category, city.",
@@ -84,7 +93,7 @@ TOOL_DECLARATIONS = [
                 "sort_by": {
                     "type": "string",
                     "description": "Sort order.",
-                    "enum": ["newest", "price_low", "price_high", "roi_high", "roi_low"],
+                    "enum": ["newest", "price_low", "price_high", "roi_high", "roi_low", "most_viewed"],
                 },
             },
             "required": ["country_code"],
@@ -255,9 +264,11 @@ async def _execute_search_listings(db: AsyncSession, args: dict) -> dict:
     country_code = args.get("country_code", "al")
     category = args.get("category")
     city = args.get("city")
+    area = args.get("area")
     min_price = args.get("min_price_eur")
     max_price = args.get("max_price_eur")
     min_roi = args.get("min_roi")
+    max_roi = args.get("max_roi")
     search = args.get("search")
     sort_by = args.get("sort_by", "newest")
 
@@ -278,15 +289,19 @@ async def _execute_search_listings(db: AsyncSession, args: dict) -> dict:
     if category:
         query = query.where(Listing.category == category)
     if city:
-        query = query.where(Listing.public_location_city_en.ilike(f"%{city}%"))
+        query = query.where(Listing.public_location_city_en.ilike(f"%{_escape_like(city)}%"))
+    if area:
+        query = query.where(Listing.public_location_area.ilike(f"%{_escape_like(area)}%"))
     if min_price:
         query = query.where(Listing.asking_price_eur >= min_price)
     if max_price:
         query = query.where(Listing.asking_price_eur <= max_price)
     if min_roi:
         query = query.where(Listing.roi >= min_roi)
+    if max_roi:
+        query = query.where(Listing.roi <= max_roi)
     if search:
-        term = f"%{search}%"
+        term = f"%{_escape_like(search)}%"
         from sqlalchemy import or_
         query = query.where(
             or_(
@@ -303,6 +318,7 @@ async def _execute_search_listings(db: AsyncSession, args: dict) -> dict:
         "price_high": desc(Listing.asking_price_eur),
         "roi_high": desc(Listing.roi),
         "roi_low": asc(Listing.roi),
+        "most_viewed": desc(Listing.view_count),
     }
     query = query.order_by(sort_map.get(sort_by, desc(Listing.created_at)))
     query = query.limit(10)
@@ -456,7 +472,7 @@ async def _execute_search_demands(db: AsyncSession, args: dict) -> dict:
     if category:
         query = query.where(BuyerDemand.category == category)
     if city:
-        query = query.where(BuyerDemand.preferred_city_en.ilike(f"%{city}%"))
+        query = query.where(BuyerDemand.preferred_city_en.ilike(f"%{_escape_like(city)}%"))
     if min_budget:
         query = query.where(BuyerDemand.budget_max_eur >= min_budget)
     if max_budget:
@@ -537,7 +553,7 @@ async def _execute_search_my_listings(db: AsyncSession, agent_id: str, args: dic
     if category:
         query = query.where(Listing.category == category)
     if city:
-        query = query.where(Listing.public_location_city_en.ilike(f"%{city}%"))
+        query = query.where(Listing.public_location_city_en.ilike(f"%{_escape_like(city)}%"))
     if max_price:
         query = query.where(Listing.asking_price_eur <= max_price)
 

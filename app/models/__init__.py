@@ -8,7 +8,7 @@ Import order matters for circular dependencies!
 from app.db.base import Base
 
 # Import models in dependency order (least dependent first)
-from app.models.country import Country, City
+from app.models.country import Country, City, Neighbourhood
 from app.models.token import EmailVerificationToken, PasswordResetToken, RefreshToken
 from app.models.user import User, AgentProfile
 from app.models.listing import Listing, ListingImage
@@ -22,6 +22,7 @@ __all__ = [
     "Base",
     "Country",
     "City",
+    "Neighbourhood",
     "EmailVerificationToken",
     "PasswordResetToken",
     "RefreshToken",

@@ -73,32 +73,10 @@ class DemandCreate(BaseModel):
 # BUYER DEMAND UPDATE
 # ============================================================================
 
-class DemandUpdate(BaseModel):
-    """Schema for updating buyer demand."""
-
-    budget_min_eur: Optional[Decimal] = Field(None, gt=0)
-    budget_max_eur: Optional[Decimal] = Field(None, gt=0)
-
-    @field_validator("budget_max_eur")
-    @classmethod
-    def validate_max_eur_greater_than_min(cls, v: Optional[Decimal], info) -> Optional[Decimal]:
-        """Validate max budget >= min budget when both are provided."""
-        if v is not None and "budget_min_eur" in info.data and info.data["budget_min_eur"] is not None:
-            if v < info.data["budget_min_eur"]:
-                raise ValueError("Maximum budget must be greater than or equal to minimum budget")
-        return v
-
-    category: Optional[str] = Field(None, min_length=2, max_length=50)
-    preferred_city_en: Optional[str] = Field(None, min_length=2, max_length=100)
-    preferred_area: Optional[str] = Field(None, max_length=100)
-    description: Optional[str] = Field(None, min_length=20, max_length=2000)
-    demand_type: Optional[str] = Field(None, pattern="^(investor|seeking_funding)$")
-
-
 class DemandStatusUpdate(BaseModel):
     """Schema for updating demand status."""
 
-    status: str = Field(..., pattern="^(active|assigned|fulfilled|closed)$")
+    status: str = Field(..., pattern="^(fulfilled|closed)$")
 
     model_config = {
         "json_schema_extra": {
@@ -157,9 +135,12 @@ class DemandResponse(BaseSchema):
 # ============================================================================
 
 class DemandSearchParams(BaseModel):
-    """Search and filter parameters for active demands."""
+    """Search and filter parameters for demands."""
 
     country_code: str = Field(..., min_length=2, max_length=2)
+
+    # Status filter (None = all statuses)
+    status: Optional[str] = Field(None, pattern="^(active|assigned|fulfilled|closed)$")
 
     # Filters
     category: Optional[str] = None

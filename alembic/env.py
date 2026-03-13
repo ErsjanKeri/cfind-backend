@@ -16,13 +16,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from app.db.base import Base
 from app.config import settings
 
-# Import all models so Alembic can detect them
-from app.models.user import User, AgentProfile
-from app.models.token import EmailVerificationToken, PasswordResetToken, RefreshToken
-from app.models.listing import Listing, ListingImage
-from app.models.lead import Lead, SavedListing
-from app.models.demand import BuyerDemand
-from app.models.promotion import CreditTransaction, PromotionHistory, CreditPackage, PromotionTierConfig
+# Import all models so Alembic can detect them (models/__init__.py is the single source of truth)
+import app.models  # noqa: F401
 
 # Alembic Config object
 config = context.config

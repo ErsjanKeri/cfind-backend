@@ -104,14 +104,16 @@ async def create_demand(
 @router.get(
     "",
     response_model=DemandsListResponse,
-    summary="Get active demands",
-    description="Browse active buyer demands (verified agents only)"
+    summary="Get demands",
+    description="Browse buyer demands. Agents see active only (pass status=active). Admins can filter by any status."
 )
-async def get_active_demands(
+async def get_demands(
     current_user: Annotated[User, Depends(get_verified_agent)],
     db: AsyncSession = Depends(get_db),
     # Country (required)
     country_code: str = Query(..., min_length=2, max_length=2, description="Country code (e.g. al, ae)"),
+    # Status filter (agents default to "active"; admins can filter by any status)
+    status_filter: Optional[str] = Query(None, alias="status", pattern="^(active|assigned|fulfilled|closed)$", description="Filter by status"),
     # Filters
     category: Optional[str] = Query(None, description="Business category"),
     city: Optional[str] = Query(None, description="Preferred city"),
@@ -123,28 +125,24 @@ async def get_active_demands(
     limit: int = Query(default=20, ge=1, le=100, description="Items per page")
 ):
     """
-    Get active buyer demands for agents to browse and claim.
-
-    **Verified agents only.**
-
-    **Shows:**
-    - Only demands with status = "active" (not yet claimed)
-    - Buyer details (name, email, company)
-    - Budget range
-    - Description
+    Get buyer demands (verified agents + admin).
 
     **Filters:**
-    - Category (restaurant, bar, etc.)
-    - City (Tirana, Durrës, etc.)
-    - Budget range (EUR)
-    - Demand type (investor or seeking_funding)
+    - status: active | assigned | fulfilled | closed (agents default to active)
+    - category, city, budget range, demand type
 
-    **Use case:**
-    Agents browse available demands and claim ones matching their expertise.
+    **Agent usage:** defaults to active demands only.
+    **Admin usage:** omit status to see all, or pass any value to filter.
     """
+    # Non-admin users only see active demands unless they explicitly filter
+    effective_status = status_filter
+    if current_user.role != "admin" and effective_status is None:
+        effective_status = "active"
+
     # Build search params
     search_params = DemandSearchParams(
         country_code=country_code,
+        status=effective_status,
         category=category,
         city=city,
         min_budget_eur=Decimal(min_budget_eur) if min_budget_eur else None,

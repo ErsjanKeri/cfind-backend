@@ -78,27 +78,85 @@ All routers registered in `app/main.py` with `prefix=settings.API_PREFIX` (`/api
 - AI: Google Gemini 2.5 Flash via `google-genai` SDK (function calling for listing search)
 - Deploy: DigitalOcean App Platform (Dockerfile, auto-deploy on push to main)
 
+## Buyer Demands (Reverse Marketplace)
+
+Buyers post what they're looking for; verified agents browse and claim demands.
+
+### Workflow
+1. Buyer creates demand (status: `active`) with budget, category, city, description
+2. Verified agents browse active demands via `GET /demands`
+3. Agent claims demand → status becomes `assigned` (exclusive, first-claimer wins via atomic UPDATE with WHERE status='active')
+4. Email sent to buyer with agent contact info
+5. Buyer marks as `fulfilled` or `closed`
+
+### Deletion rules
+Only `active` demands can be deleted. Assigned/fulfilled/closed demands are kept for historical tracking.
+
+### Key files
+- `app/api/routes/demands.py`, `app/repositories/demand_repo.py`, `app/schemas/demand.py`, `app/models/demand.py`
+
+## Promotion & Credits System
+
+Agents purchase credits and spend them to promote listings to higher visibility tiers.
+
+### Tiers
+- `standard` (free, default) → `featured` (5 credits/30 days) → `premium` (15 credits/30 days)
+- Upgrading from featured→premium charges only the difference (10 credits)
+- Listing search always sorts by tier priority (premium > featured > standard), then secondary sort
+
+### Credit flow
+- `create_credit_transaction()` in `promotion_repo.py` atomically updates `AgentProfile.credit_balance` using a WHERE clause to prevent negative balance race conditions
+- Transaction types: `purchase`, `usage`, `refund`, `bonus`, `adjustment`
+- Payments are currently **simulated** (TODO: Stripe/PayPal integration)
+
+### Expiration
+- Cron endpoint `POST /cron/expire-promotions` marks expired promotions and resets listing tiers
+- `PromotionHistory` tracks performance metrics: `views_during_promotion`, `leads_during_promotion`
+
+### Key files
+- `app/api/routes/promotions.py`, `app/repositories/promotion_repo.py`, `app/models/promotion.py`, `app/schemas/promotion.py`
+
+## Geography System
+
+DB-backed countries, cities, and neighbourhoods. Admin-managed via `POST/PUT/DELETE /admin/geography/...`.
+
+### Important caveat
+`VALID_COUNTRY_CODES` in `app/core/constants.py` is hardcoded `["al", "ae"]`. Multiple routes validate against this constant. If countries are added to the DB, the constant must also be updated. Agent service system prompts and tool enum declarations also hardcode country lists.
+
+### Key files
+- `app/api/routes/countries.py` (public read), `app/repositories/geography_repo.py`, `app/models/country.py`, `app/schemas/geography.py`
+- Admin geography endpoints in `app/api/routes/admin.py`
+
 ## AI Agent (Chat)
 
-The AI recommendation agent lives in `app/services/agent_service.py` and is accessed via `app/api/routes/chat.py` (prefix `/chat`).
+The AI agent lives in `app/services/agent_service.py` and is accessed via `app/api/routes/chat.py` (prefix `/chat`).
+
+### Two modes
+- **Buyer mode**: Listing recommendations. Tools: `search_listings`, `get_listing_detail`, `get_market_info`. User context includes country preference + saved listing titles.
+- **Agent mode**: Demand matching. Tools: `search_demands`, `get_demand_detail`, `search_my_listings`, `get_market_info`. Helps agents find buyer demands that match their listings.
 
 ### How it works
-- Uses Gemini function calling with 3 tool declarations: `search_listings`, `get_listing_detail`, `get_market_info`
-- Tool calls execute real DB queries against the Listing model, then results are fed back to Gemini for a conversational response
-- Tool call results (including listing data) are stored in the `tool_calls` JSON column on messages so the frontend can render listing cards
-- User context (country preference + saved listing titles) is injected into the system prompt for personalized recommendations
+- Uses Gemini function calling. Tool calls execute real DB queries, results fed back to Gemini for conversational response.
+- Tool call results stored in `tool_calls` JSON column on messages so frontend can render listing/demand cards.
+- Separate system prompts and tool declarations per mode (`SYSTEM_INSTRUCTION` / `AGENT_SYSTEM_INSTRUCTION`).
+- Max 5 tool-call rounds per message. Rate limited 6/minute + daily message limit.
 
 ### Key files
 - `app/services/agent_service.py` — Gemini client, tool declarations, tool executors, chat loop
 - `app/api/routes/chat.py` — REST endpoints (POST `/message`, GET/DELETE `/conversations`)
 - `app/repositories/chat_repo.py` — Conversation/Message CRUD
 - `app/models/conversation.py` — Conversation + Message SQLAlchemy models
-- `app/schemas/chat.py` — Pydantic request/response schemas
 
 ### Access control
-- Restricted to `buyer` and `admin` roles via `RoleChecker(["buyer", "admin"])`
-- State-changing endpoints (send message, delete conversation) require CSRF token
-- Daily message limit configured via `AGENT_MAX_MESSAGES_PER_DAY` setting
+- All three roles (`buyer`, `agent`, `admin`) can access chat. Mode must match role (buyer mode for buyers, agent mode for agents, admin can use either).
+- State-changing endpoints require CSRF token
+- Daily message limit: `AGENT_MAX_MESSAGES_PER_DAY` (default: 50)
+
+### Known issues
+- **Unescaped LIKE wildcards** (lines 281, 289, 459, 540): City and search filters pass user input directly into `.ilike()` without escaping `%`/`_`. The escape function exists in `listing_repo.py:34` (`_escape_like()`) but is not used here.
+- **Hardcoded limit(10)** (lines 308, 465, 544): All tool queries cap at 10 results with no pagination.
+- **Missing `most_viewed` in sort_map** (lines 300-306): Falls through to default `desc(created_at)`. The REST API route supports it.
+- **Missing tool params**: TOOL_DECLARATIONS (lines 46-92) lack `area` and `max_roi` parameters that the REST API and MCP tool both support.
 
 ### Config
 - `GEMINI_API_KEY` — Google AI API key (required, set as SECRET in DigitalOcean)

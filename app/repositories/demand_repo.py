@@ -19,7 +19,7 @@ import uuid
 
 from app.models.demand import BuyerDemand
 from app.models.user import User, AgentProfile
-from app.schemas.demand import DemandCreate, DemandUpdate, DemandSearchParams, DemandResponse
+from app.schemas.demand import DemandCreate, DemandSearchParams, DemandResponse
 
 logger = logging.getLogger(__name__)
 
@@ -109,9 +109,9 @@ async def get_active_demands(
     search_params: DemandSearchParams
 ) -> Tuple[List[DemandResponse], int]:
     """
-    Get active demands for agents to browse.
+    Get demands for agents/admins to browse.
 
-    Only shows demands with status = "active" (not yet claimed).
+    Filters by status when provided (agents default to "active" at the route layer).
 
     Supports filtering by:
     - Category
@@ -130,16 +130,20 @@ async def get_active_demands(
         >>> params = DemandSearchParams(category="restaurant", city="Tirana")
         >>> demands, total = await get_active_demands(db, params)
     """
-    # Base query - only active demands
+    # Base query
     query = (
         select(BuyerDemand, User)
         .join(User, BuyerDemand.buyer_id == User.id)
         .options(
-            selectinload(BuyerDemand.buyer)  # Just load buyer, no profile
+            selectinload(BuyerDemand.buyer),
+            selectinload(BuyerDemand.assigned_agent).selectinload(User.agent_profile)
         )
-        .where(BuyerDemand.status == "active")
         .where(BuyerDemand.country_code == search_params.country_code)
     )
+
+    # Status filter (if provided); otherwise return all statuses
+    if search_params.status:
+        query = query.where(BuyerDemand.status == search_params.status)
 
     # ========================================================================
     # FILTERS
@@ -186,10 +190,9 @@ async def get_active_demands(
     result = await db.execute(query)
     rows = result.all()
 
-    # Transform to dict (active demands have no assigned agent)
     demands_list = [_transform_demand(demand, buyer=buyer) for demand, buyer in rows]
 
-    logger.info(f"Fetched {len(demands_list)} active demands (page {search_params.page}, total: {total})")
+    logger.info(f"Fetched {len(demands_list)} demands (status={search_params.status or 'all'}, page {search_params.page}, total: {total})")
     return demands_list, total
 
 

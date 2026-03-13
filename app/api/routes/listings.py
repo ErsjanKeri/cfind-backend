@@ -185,8 +185,6 @@ async def get_listing(
         listing_dict = listing_repo.transform_private_listing(listing, agent)
     else:
         await listing_repo.increment_view_count(db, listing.id)
-        result = await listing_repo.get_listing_by_id(db, listing_id, mode="public")
-        listing, agent = result
         listing_dict = listing_repo.transform_public_listing(listing, agent)
 
     return ListingGetResponse(

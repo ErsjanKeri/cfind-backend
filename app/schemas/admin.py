@@ -216,6 +216,9 @@ class AdminUsersListResponse(BaseSchema):
 
     success: bool = True
     total: int
+    page: int
+    limit: int
+    total_pages: int
     users: List[UserListItem]
 
 

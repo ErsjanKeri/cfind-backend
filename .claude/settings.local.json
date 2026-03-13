@@ -9,7 +9,9 @@
       "mcp__digitalocean__apps-get-deployment-status",
       "Bash(docker exec:*)",
       "Bash(grep:*)",
-      "Bash(./venv/bin/python:*)"
+      "Bash(./venv/bin/python:*)",
+      "Bash(ls -la /Users/ersibesi/Projects/company-finder-platform/cfind-frontend/app/\\\\[country\\\\]/ | head -30)",
+      "Bash(grep -n \"\\\\.join\\(\" app/repositories/*.py | head -20)"
     ]
   }
 }

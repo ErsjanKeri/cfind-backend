@@ -13,9 +13,7 @@ Endpoints:
 - POST /admin/credits/adjust - Adjust agent credits
 - POST /admin/geography/{country_code}/cities - Create city
 - PUT /admin/geography/cities/{city_id} - Update city
-- DELETE /admin/geography/cities/{city_id} - Delete city
 - POST /admin/geography/cities/{city_id}/neighbourhoods - Create neighbourhood
-- DELETE /admin/geography/neighbourhoods/{neighbourhood_id} - Delete neighbourhood
 """
 
 import logging
@@ -44,7 +42,7 @@ from app.api.deps import (
 from app.schemas.geography import (
     CreateCityRequest, UpdateCityRequest, AdminCityResponse,
     CreateNeighbourhoodRequest, AdminNeighbourhoodResponse,
-    AdminGeographyResponse, CityResponse, NeighbourhoodResponse,
+    CityResponse, NeighbourhoodResponse,
 )
 from app.repositories import admin_repo
 from app.repositories.user_repo import get_user_by_id
@@ -523,22 +521,6 @@ async def update_city(
     )
 
 
-@router.delete(
-    "/geography/cities/{city_id}",
-    response_model=AdminGeographyResponse,
-    summary="Delete city",
-)
-async def delete_city(
-    city_id: int,
-    current_user: Annotated[User, Depends(RoleChecker(["admin"]))],
-    _: None = Depends(verify_csrf_token),
-    db: AsyncSession = Depends(get_db),
-):
-    deleted = await geography_repo.delete_city(db, city_id)
-    if not deleted:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="City not found")
-    return AdminGeographyResponse(message="City deleted successfully")
-
 
 @router.post(
     "/geography/cities/{city_id}/neighbourhoods",
@@ -563,18 +545,3 @@ async def create_neighbourhood(
     )
 
 
-@router.delete(
-    "/geography/neighbourhoods/{neighbourhood_id}",
-    response_model=AdminGeographyResponse,
-    summary="Delete neighbourhood",
-)
-async def delete_neighbourhood(
-    neighbourhood_id: int,
-    current_user: Annotated[User, Depends(RoleChecker(["admin"]))],
-    _: None = Depends(verify_csrf_token),
-    db: AsyncSession = Depends(get_db),
-):
-    deleted = await geography_repo.delete_neighbourhood(db, neighbourhood_id)
-    if not deleted:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Neighbourhood not found")
-    return AdminGeographyResponse(message="Neighbourhood deleted successfully")

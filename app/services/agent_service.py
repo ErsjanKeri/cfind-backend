@@ -95,6 +95,14 @@ TOOL_DECLARATIONS = [
                     "description": "Sort order.",
                     "enum": ["newest", "price_low", "price_high", "roi_high", "roi_low", "most_viewed"],
                 },
+                "page": {
+                    "type": "integer",
+                    "description": "Page number (1-based). Use to get more results beyond the first page. Default: 1.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of results per page (1-20). Default: 10.",
+                },
             },
             "required": ["country_code"],
         },
@@ -187,6 +195,14 @@ AGENT_TOOL_DECLARATIONS = [
                     "type": "number",
                     "description": "Maximum buyer budget in EUR.",
                 },
+                "page": {
+                    "type": "integer",
+                    "description": "Page number (1-based). Default: 1.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of results per page (1-20). Default: 10.",
+                },
             },
             "required": ["country_code"],
         },
@@ -228,6 +244,14 @@ AGENT_TOOL_DECLARATIONS = [
                 "max_price_eur": {
                     "type": "number",
                     "description": "Maximum asking price in EUR (to match a buyer's budget).",
+                },
+                "page": {
+                    "type": "integer",
+                    "description": "Page number (1-based). Default: 1.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of results per page (1-20). Default: 10.",
                 },
             },
         },
@@ -271,6 +295,8 @@ async def _execute_search_listings(db: AsyncSession, args: dict) -> dict:
     max_roi = args.get("max_roi")
     search = args.get("search")
     sort_by = args.get("sort_by", "newest")
+    page = max(1, int(args.get("page", 1)))
+    limit = max(1, min(20, int(args.get("limit", 10))))
 
     query = (
         select(Listing, User)
@@ -321,7 +347,8 @@ async def _execute_search_listings(db: AsyncSession, args: dict) -> dict:
         "most_viewed": desc(Listing.view_count),
     }
     query = query.order_by(sort_map.get(sort_by, desc(Listing.created_at)))
-    query = query.limit(10)
+    offset = (page - 1) * limit
+    query = query.offset(offset).limit(limit)
 
     result = await db.execute(query)
     rows = result.all()
@@ -354,7 +381,7 @@ async def _execute_search_listings(db: AsyncSession, args: dict) -> dict:
         }
         listings.append(item)
 
-    return {"total": len(listings), "listings": listings}
+    return {"total": len(listings), "page": page, "limit": limit, "listings": listings}
 
 
 async def _execute_get_listing_detail(db: AsyncSession, args: dict) -> dict:
@@ -459,6 +486,8 @@ async def _execute_search_demands(db: AsyncSession, args: dict) -> dict:
     city = args.get("city")
     min_budget = args.get("min_budget")
     max_budget = args.get("max_budget")
+    page = max(1, int(args.get("page", 1)))
+    limit = max(1, min(20, int(args.get("limit", 10))))
 
     query = (
         select(BuyerDemand, User)
@@ -478,7 +507,8 @@ async def _execute_search_demands(db: AsyncSession, args: dict) -> dict:
     if max_budget:
         query = query.where(BuyerDemand.budget_min_eur <= max_budget)
 
-    query = query.order_by(desc(BuyerDemand.created_at)).limit(10)
+    offset = (page - 1) * limit
+    query = query.order_by(desc(BuyerDemand.created_at)).offset(offset).limit(limit)
 
     result = await db.execute(query)
     rows = result.all()
@@ -499,7 +529,7 @@ async def _execute_search_demands(db: AsyncSession, args: dict) -> dict:
             "created_at": demand.created_at.isoformat() if demand.created_at else None,
         })
 
-    return {"total": len(demands), "demands": demands}
+    return {"total": len(demands), "page": page, "limit": limit, "demands": demands}
 
 
 async def _execute_get_demand_detail(db: AsyncSession, args: dict) -> dict:
@@ -547,6 +577,8 @@ async def _execute_search_my_listings(db: AsyncSession, agent_id: str, args: dic
     category = args.get("category")
     city = args.get("city")
     max_price = args.get("max_price_eur")
+    page = max(1, int(args.get("page", 1)))
+    limit = max(1, min(20, int(args.get("limit", 10))))
 
     if country_code:
         query = query.where(Listing.country_code == country_code)
@@ -557,7 +589,8 @@ async def _execute_search_my_listings(db: AsyncSession, agent_id: str, args: dic
     if max_price:
         query = query.where(Listing.asking_price_eur <= max_price)
 
-    query = query.order_by(desc(Listing.created_at)).limit(10)
+    offset = (page - 1) * limit
+    query = query.order_by(desc(Listing.created_at)).offset(offset).limit(limit)
 
     result = await db.execute(query)
     listings_list = []
@@ -583,7 +616,7 @@ async def _execute_search_my_listings(db: AsyncSession, agent_id: str, args: dic
             "url": f"{settings.APP_URL}/{listing.country_code}/listings/{listing.id}",
         })
 
-    return {"total": len(listings_list), "listings": listings_list}
+    return {"total": len(listings_list), "page": page, "limit": limit, "listings": listings_list}
 
 
 async def execute_tool(db: AsyncSession, name: str, args: dict, agent_id: str = None) -> dict:

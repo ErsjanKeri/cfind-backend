@@ -51,14 +51,6 @@ async def update_city(db: AsyncSession, city_id: int, name: str) -> City | None:
     return city
 
 
-async def delete_city(db: AsyncSession, city_id: int) -> bool:
-    city = await get_city_by_id(db, city_id)
-    if not city:
-        return False
-    await db.delete(city)
-    await db.flush()
-    return True
-
 
 async def get_neighbourhoods(db: AsyncSession, city_id: int) -> list[Neighbourhood]:
     result = await db.execute(
@@ -83,10 +75,3 @@ async def create_neighbourhood(db: AsyncSession, city_id: int, name: str) -> Nei
     return neighbourhood
 
 
-async def delete_neighbourhood(db: AsyncSession, neighbourhood_id: int) -> bool:
-    neighbourhood = await get_neighbourhood_by_id(db, neighbourhood_id)
-    if not neighbourhood:
-        return False
-    await db.delete(neighbourhood)
-    await db.flush()
-    return True

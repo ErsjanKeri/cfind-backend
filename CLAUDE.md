@@ -153,10 +153,7 @@ The AI agent lives in `app/services/agent_service.py` and is accessed via `app/a
 - Daily message limit: `AGENT_MAX_MESSAGES_PER_DAY` (default: 50)
 
 ### Known issues
-- **Unescaped LIKE wildcards** (lines 281, 289, 459, 540): City and search filters pass user input directly into `.ilike()` without escaping `%`/`_`. The escape function exists in `listing_repo.py:34` (`_escape_like()`) but is not used here.
-- **Hardcoded limit(10)** (lines 308, 465, 544): All tool queries cap at 10 results with no pagination.
-- **Missing `most_viewed` in sort_map** (lines 300-306): Falls through to default `desc(created_at)`. The REST API route supports it.
-- **Missing tool params**: TOOL_DECLARATIONS (lines 46-92) lack `area` and `max_roi` parameters that the REST API and MCP tool both support.
+- No known issues in agent service at this time.
 
 ### Config
 - `GEMINI_API_KEY` — Google AI API key (required, set as SECRET in DigitalOcean)

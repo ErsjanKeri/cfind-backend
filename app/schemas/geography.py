@@ -49,10 +49,6 @@ class CreateNeighbourhoodRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
 
 
-class AdminGeographyResponse(BaseModel):
-    success: bool = True
-    message: str
-
 
 class AdminCityResponse(BaseModel):
     success: bool = True

@@ -184,8 +184,8 @@ async def get_listing(
     if is_owner or is_admin:
         listing_dict = listing_repo.transform_private_listing(listing, agent)
     else:
-        await listing_repo.increment_view_count(db, listing.id)
         listing_dict = listing_repo.transform_public_listing(listing, agent)
+        await listing_repo.increment_view_count(db, listing.id)
 
     return ListingGetResponse(
         success=True,

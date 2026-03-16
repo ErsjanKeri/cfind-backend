@@ -132,8 +132,8 @@ DB-backed countries, cities, and neighbourhoods. Admin-managed via `POST/PUT/DEL
 The AI agent lives in `app/services/agent_service.py` and is accessed via `app/api/routes/chat.py` (prefix `/chat`).
 
 ### Two modes
-- **Buyer mode**: Listing recommendations. Tools: `search_listings`, `get_listing_detail`, `get_market_info`. User context includes country preference + saved listing titles.
-- **Agent mode**: Demand matching. Tools: `search_demands`, `get_demand_detail`, `search_my_listings`, `get_market_info`. Helps agents find buyer demands that match their listings.
+- **Buyer mode**: Listing recommendations only. Tools: `search_listings`, `get_listing_detail`, `get_market_info`. User context includes country preference + saved listing titles. **By design, buyer mode has NO access to the demands system** — buyers discover listings through AI search, and agents are the ones who connect buyers to opportunities. The demand system is agent-facing only.
+- **Agent mode**: Demand matching. Tools: `search_demands`, `get_demand_detail`, `search_my_listings`, `get_market_info`. Helps agents find buyer demands that match their listings. Agents are the connectors between buyer demands and available businesses.
 
 ### How it works
 - Uses Gemini function calling. Tool calls execute real DB queries, results fed back to Gemini for conversational response.

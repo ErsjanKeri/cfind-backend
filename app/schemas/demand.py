@@ -6,6 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from app.schemas.base import BaseSchema
+from app.core.constants import VALID_CATEGORIES
 
 
 # ============================================================================
@@ -45,6 +46,13 @@ class DemandCreate(BaseModel):
 
     # Demand type: "investor" (default) | "seeking_funding"
     demand_type: str = Field(default="investor", pattern="^(investor|seeking_funding)$")
+
+    @field_validator("category")
+    @classmethod
+    def validate_category(cls, v: str) -> str:
+        if v not in VALID_CATEGORIES:
+            raise ValueError(f"Invalid category. Must be one of: {', '.join(VALID_CATEGORIES)}")
+        return v
 
     @field_validator("budget_max_eur")
     @classmethod

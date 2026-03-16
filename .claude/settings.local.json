@@ -13,7 +13,8 @@
       "Bash(ls -la /Users/ersibesi/Projects/company-finder-platform/cfind-frontend/app/\\\\[country\\\\]/ | head -30)",
       "Bash(grep -n \"\\\\.join\\(\" app/repositories/*.py | head -20)",
       "Bash(find /Users/ersibesi/Projects/company-finder-platform -type f \\\\\\( -name \".github\" -o -path \"*/.github/workflows/*\" -o -name \"Makefile\" -o -name \".gitlab-ci.yml\" \\\\\\) -not -path \"*/venv/*\" -not -path \"*/.venv/*\" -not -path \"*/node_modules/*\" 2>/dev/null | head -20)",
-      "Bash(which pytest:*)"
+      "Bash(which pytest:*)",
+      "Bash(pip show:*)"
     ]
   }
 }

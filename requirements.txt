@@ -32,7 +32,7 @@ python-dateutil==2.9.0
 httpx==0.28.1
 
 # AI Agent (Gemini)
-google-genai>=1.0.0
+google-genai>=1.0.0,<2.0.0
 
 # Background Jobs (optional)
 apscheduler==3.11.0

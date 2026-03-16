@@ -9,6 +9,7 @@ from sqlalchemy import select, and_
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
+from app.core.constants import VALID_CATEGORIES
 from app.models.listing import Listing
 from app.models.demand import BuyerDemand
 from app.models.user import User, AgentProfile
@@ -274,7 +275,7 @@ AGENT_TOOL_DECLARATIONS = [
 
 AGENT_TOOLS = [types.Tool(function_declarations=AGENT_TOOL_DECLARATIONS)]
 
-CATEGORIES = ["restaurant", "bar", "cafe", "retail", "hotel", "manufacturing", "services", "technology", "healthcare", "education", "real-estate", "other"]
+CATEGORIES = VALID_CATEGORIES
 
 
 def _get_client() -> genai.Client:

@@ -369,8 +369,6 @@ async def admin_create_buyer(
     db.add(user)
     await db.flush()
 
-    await db.flush()
-
     logger.info(f"Admin created buyer: {user.id} ({email})")
     return user
 

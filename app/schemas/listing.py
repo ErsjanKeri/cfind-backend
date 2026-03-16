@@ -1,11 +1,12 @@
 """Pydantic schemas for listing operations."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Union
 from datetime import datetime
 from decimal import Decimal
 
 from app.schemas.base import BaseSchema
+from app.core.constants import VALID_CATEGORIES
 
 
 # ============================================================================
@@ -69,6 +70,13 @@ class ListingCreate(BaseModel):
     # ========================================================================
     asking_price_eur: Decimal = Field(..., gt=0, max_digits=12, decimal_places=2)
     monthly_revenue_eur: Optional[Decimal] = Field(None, ge=0, max_digits=12, decimal_places=2)
+
+    @field_validator("category")
+    @classmethod
+    def validate_category(cls, v: str) -> str:
+        if v not in VALID_CATEGORIES:
+            raise ValueError(f"Invalid category. Must be one of: {', '.join(VALID_CATEGORIES)}")
+        return v
 
     # ========================================================================
     # BUSINESS DETAILS
@@ -140,6 +148,13 @@ class ListingUpdate(BaseModel):
     # Financials
     asking_price_eur: Optional[Decimal] = Field(None, gt=0, max_digits=12, decimal_places=2)
     monthly_revenue_eur: Optional[Decimal] = Field(None, ge=0, max_digits=12, decimal_places=2)
+
+    @field_validator("category")
+    @classmethod
+    def validate_category(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in VALID_CATEGORIES:
+            raise ValueError(f"Invalid category. Must be one of: {', '.join(VALID_CATEGORIES)}")
+        return v
 
     # Business details
     employee_count: Optional[int] = Field(None, ge=0)

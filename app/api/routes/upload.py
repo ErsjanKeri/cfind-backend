@@ -35,6 +35,7 @@ from app.services.upload_service import (
     upload_image_direct,
     upload_document_direct
 )
+from app.utils.s3_client import extract_key_from_url, generate_presigned_get
 from app.repositories import user_repo
 from app.schemas.user import AgentProfileUpdate
 
@@ -281,3 +282,36 @@ async def confirm_document_upload(
         re_verification_triggered=re_verification_triggered,
         verification_status=agent_profile.verification_status
     )
+
+
+@router.get(
+    "/document-url",
+    summary="Get presigned URL for viewing a private document",
+    description="Generate a temporary (1-hour) signed URL for viewing an agent document"
+)
+async def get_document_view_url(
+    url: str = Query(..., description="The stored document URL"),
+    current_user: Annotated[User, Depends(get_verified_user)] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate a presigned GET URL for viewing a private document.
+
+    **Access control:**
+    - Agents can view their own documents
+    - Admins can view any agent's documents
+
+    Returns a signed URL valid for 1 hour.
+    """
+    key = extract_key_from_url(url)
+    if not key or not key.startswith("documents/"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid document URL")
+
+    # Agents can only view their own documents
+    is_admin = current_user.role == "admin"
+    own_document = f"documents/agents/{current_user.id}/" in key
+    if not is_admin and not own_document:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to view this document")
+
+    presigned_url = generate_presigned_get(key, expiration=3600)
+    return {"success": True, "url": presigned_url}

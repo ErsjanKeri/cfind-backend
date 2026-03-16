@@ -34,7 +34,7 @@ router = APIRouter()
     summary="Request password reset",
     description="Send password reset link to user's email"
 )
-@limiter.limit("3/hour")
+@limiter.limit("6/hour")
 async def password_reset_request(
     request: Request,
     reset_request: PasswordResetRequestRequest,

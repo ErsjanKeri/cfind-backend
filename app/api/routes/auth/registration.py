@@ -38,7 +38,7 @@ router = APIRouter()
     summary="Register new user",
     description="Register a new buyer or agent account. Sends email verification link."
 )
-@limiter.limit("3/hour")
+@limiter.limit("6/hour")
 async def register(
     request: Request,
     db: AsyncSession = Depends(get_db),

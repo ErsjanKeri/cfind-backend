@@ -30,7 +30,7 @@ router = APIRouter(prefix="/chat")
 
 
 @router.post("/message", response_model=ChatMessageResponse)
-@limiter.limit("6/minute")
+@limiter.limit("12/minute")
 async def send_message(
     request: Request,
     body: ChatMessageRequest,

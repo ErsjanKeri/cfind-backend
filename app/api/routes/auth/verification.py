@@ -83,7 +83,7 @@ async def verify_email(
     summary="Resend verification email",
     description="Resend email verification link"
 )
-@limiter.limit("3/hour")
+@limiter.limit("6/hour")
 async def resend_verification(
     request: Request,
     resend_request: ResendVerificationRequest,

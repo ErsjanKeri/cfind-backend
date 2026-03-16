@@ -112,7 +112,7 @@ def _clear_auth_cookies(response: Response) -> None:
     summary="Login user",
     description="Authenticate user and issue JWT access + refresh tokens in HTTPOnly cookies"
 )
-@limiter.limit("5/minute")
+@limiter.limit("10/minute")
 async def login(
     request: Request,
     response: Response,
@@ -208,7 +208,7 @@ async def login(
     summary="Refresh access token",
     description="Use refresh token to obtain new access token"
 )
-@limiter.limit("30/minute")
+@limiter.limit("60/minute")
 async def refresh_token(
     request: Request,
     response: Response,

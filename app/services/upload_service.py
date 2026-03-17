@@ -3,21 +3,21 @@ File upload service.
 
 Handles:
 - File validation (type, size)
+- EXIF metadata stripping (privacy protection)
 - Image uploads (profile pictures, listing images)
 - Document uploads (agent verification documents)
-- S3 presigned URL generation
-- Direct server uploads
+- Direct server uploads to S3
 """
 
 import asyncio
+import io
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional
 from fastapi import UploadFile, HTTPException, status
+from PIL import Image, ImageOps
 from app.utils.s3_client import (
-    generate_presigned_post,
     upload_file,
     delete_file,
-    get_public_url,
     generate_image_key,
     generate_document_key,
     extract_key_from_url
@@ -25,10 +25,6 @@ from app.utils.s3_client import (
 
 logger = logging.getLogger(__name__)
 
-
-# ============================================================================
-# FILE VALIDATION
-# ============================================================================
 
 # Allowed MIME types
 ALLOWED_IMAGE_TYPES = [
@@ -46,6 +42,22 @@ ALLOWED_DOCUMENT_TYPES = [
     'image/png'
 ]
 
+# MIME types that contain EXIF data and can be stripped
+EXIF_STRIPPABLE_TYPES = [
+    'image/jpeg',
+    'image/jpg',
+    'image/png',
+    'image/webp',
+]
+
+# Pillow format mapping
+CONTENT_TYPE_TO_PIL_FORMAT = {
+    'image/jpeg': 'JPEG',
+    'image/jpg': 'JPEG',
+    'image/png': 'PNG',
+    'image/webp': 'WEBP',
+}
+
 # File size limits (in bytes)
 MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10 MB
 MAX_DOCUMENT_SIZE = 15 * 1024 * 1024  # 15 MB
@@ -55,24 +67,13 @@ def validate_image_file(
     content_type: str,
     file_size: Optional[int] = None
 ) -> None:
-    """
-    Validate image file type and size.
-
-    Args:
-        content_type: MIME type
-        file_size: File size in bytes (optional)
-
-    Raises:
-        HTTPException: If validation fails
-    """
-    # Validate content type
+    """Validate image file type and size."""
     if content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid image type. Allowed types: {', '.join(ALLOWED_IMAGE_TYPES)}"
         )
 
-    # Validate file size
     if file_size and file_size > MAX_IMAGE_SIZE:
         max_mb = MAX_IMAGE_SIZE / (1024 * 1024)
         raise HTTPException(
@@ -85,24 +86,13 @@ def validate_document_file(
     content_type: str,
     file_size: Optional[int] = None
 ) -> None:
-    """
-    Validate document file type and size.
-
-    Args:
-        content_type: MIME type
-        file_size: File size in bytes (optional)
-
-    Raises:
-        HTTPException: If validation fails
-    """
-    # Validate content type
+    """Validate document file type and size."""
     if content_type not in ALLOWED_DOCUMENT_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid document type. Allowed types: {', '.join(ALLOWED_DOCUMENT_TYPES)}"
         )
 
-    # Validate file size
     if file_size and file_size > MAX_DOCUMENT_SIZE:
         max_mb = MAX_DOCUMENT_SIZE / (1024 * 1024)
         raise HTTPException(
@@ -111,142 +101,59 @@ def validate_document_file(
         )
 
 
-# ============================================================================
-# PRESIGNED URL GENERATION
-# ============================================================================
-
-async def generate_image_upload_url(
-    filename: str,
-    content_type: str,
-    folder: str = "general"
-) -> Dict[str, Any]:
+def strip_exif(content: bytes, content_type: str) -> bytes:
     """
-    Generate presigned URL for image upload.
+    Strip EXIF metadata from image bytes while preserving visual fidelity.
 
-    Args:
-        filename: Original filename
-        content_type: MIME type
-        folder: Image folder (e.g., "profiles", "listings")
+    - Applies EXIF orientation before stripping (prevents rotated photos)
+    - Preserves ICC color profiles (prevents color shifts)
+    - Removes GPS coordinates, camera info, timestamps, and all other EXIF data
 
-    Returns:
-        Dict with:
-        - url: S3 POST URL
-        - fields: Form fields for upload
-        - key: S3 object key
-        - public_url: URL where file will be accessible after upload
-
-    Raises:
-        HTTPException: If validation fails
-
-    Example:
-        >>> result = await generate_image_upload_url(
-        ...     filename="avatar.jpg",
-        ...     content_type="image/jpeg",
-        ...     folder="profiles"
-        ... )
-        >>> # Client uploads to result['url'] with result['fields']
-        >>> # File accessible at result['public_url']
+    Returns original bytes unchanged for non-strippable types (GIF, PDF).
     """
-    # Validate image
-    validate_image_file(content_type)
+    pil_format = CONTENT_TYPE_TO_PIL_FORMAT.get(content_type)
+    if not pil_format:
+        return content
 
-    # Generate unique S3 key
-    key = generate_image_key(folder, filename)
+    try:
+        image = Image.open(io.BytesIO(content))
 
-    # Generate presigned POST (blocking boto3 call)
-    presigned = await asyncio.to_thread(
-        generate_presigned_post,
-        key=key,
-        content_type=content_type,
-        max_file_size=MAX_IMAGE_SIZE,
-        expiration=3600,
-    )
+        # Apply EXIF orientation (rotate/flip) before stripping the tag,
+        # otherwise phone photos will appear sideways
+        image = ImageOps.exif_transpose(image)
 
-    # Get public URL (where file will be accessible after upload)
-    public_url = get_public_url(key)
+        # Preserve ICC color profile if present
+        icc_profile = image.info.get('icc_profile')
 
-    return {
-        "url": presigned["url"],
-        "fields": presigned["fields"],
-        "key": key,
-        "public_url": public_url
-    }
+        # Re-encode without EXIF
+        output = io.BytesIO()
+        save_kwargs = {}
+        if pil_format == 'JPEG':
+            save_kwargs['quality'] = 95
+        if pil_format == 'WEBP':
+            save_kwargs['quality'] = 95
+        if icc_profile:
+            save_kwargs['icc_profile'] = icc_profile
 
+        image.save(output, format=pil_format, **save_kwargs)
+        stripped = output.getvalue()
 
-async def generate_document_upload_url(
-    user_id: str,
-    document_type: str,
-    filename: str,
-    content_type: str
-) -> Dict[str, Any]:
-    """
-    Generate presigned URL for agent document upload.
+        logger.info(f"Stripped EXIF metadata ({len(content)} -> {len(stripped)} bytes)")
+        return stripped
 
-    Args:
-        user_id: User UUID
-        document_type: "license" | "company" | "id"
-        filename: Original filename
-        content_type: MIME type
+    except Exception as e:
+        logger.warning(f"Failed to strip EXIF, uploading original: {e}")
+        return content
 
-    Returns:
-        Dict with:
-        - url: S3 POST URL
-        - fields: Form fields for upload
-        - key: S3 object key
-        - public_url: URL where file will be accessible after upload
-
-    Raises:
-        HTTPException: If validation fails
-    """
-    # Validate document
-    validate_document_file(content_type)
-
-    # Validate document type
-    if document_type not in ["license", "company", "id"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid document type. Must be: license, company, or id"
-        )
-
-    # Generate unique S3 key
-    key = generate_document_key(user_id, document_type, filename)
-
-    # Generate presigned POST (blocking boto3 call)
-    presigned = await asyncio.to_thread(
-        generate_presigned_post,
-        key=key,
-        content_type=content_type,
-        max_file_size=MAX_DOCUMENT_SIZE,
-        expiration=3600,
-        acl="private",
-    )
-
-    # Get public URL (admin will access via presigned GET)
-    public_url = get_public_url(key)
-
-    return {
-        "url": presigned["url"],
-        "fields": presigned["fields"],
-        "key": key,
-        "public_url": public_url
-    }
-
-
-# ============================================================================
-# DIRECT FILE UPLOAD (SERVER-SIDE)
-# ============================================================================
 
 async def upload_image_direct(
     file: UploadFile,
     folder: str = "general"
 ) -> str:
     """
-    Upload image directly from server to S3.
+    Upload image directly from server to S3 with EXIF stripping.
 
-    Use this when server needs to process the file before upload
-    (e.g., resize, compress, watermark).
-
-    For most cases, prefer presigned URLs (client uploads directly).
+    All EXIF metadata (GPS, camera info, timestamps) is removed before upload.
 
     Args:
         file: FastAPI UploadFile object
@@ -254,29 +161,19 @@ async def upload_image_direct(
 
     Returns:
         Public URL of uploaded image
-
-    Raises:
-        HTTPException: If upload fails
-
-    Example:
-        >>> @app.post("/upload")
-        >>> async def upload(file: UploadFile = File(...)):
-        ...     url = await upload_image_direct(file, folder="profiles")
-        ...     return {"url": url}
     """
-    # Validate image
     validate_image_file(
         content_type=file.content_type,
         file_size=file.size if hasattr(file, 'size') else None
     )
 
-    # Read file content
     content = await file.read()
 
-    # Generate unique key
+    # Strip EXIF metadata before uploading
+    content = await asyncio.to_thread(strip_exif, content, file.content_type)
+
     key = generate_image_key(folder, file.filename)
 
-    # Upload to S3 (blocking boto3 call)
     try:
         url = await asyncio.to_thread(
             upload_file,
@@ -308,6 +205,9 @@ async def upload_document_direct(
     """
     Upload agent document directly from server to S3.
 
+    For image-based documents (JPEG, PNG), EXIF metadata is stripped.
+    PDFs are uploaded as-is.
+
     Args:
         file: FastAPI UploadFile object
         user_id: User UUID
@@ -315,30 +215,26 @@ async def upload_document_direct(
 
     Returns:
         Public URL of uploaded document
-
-    Raises:
-        HTTPException: If upload fails
     """
-    # Validate document
     validate_document_file(
         content_type=file.content_type,
         file_size=file.size if hasattr(file, 'size') else None
     )
 
-    # Validate document type
     if document_type not in ["license", "company", "id"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid document type. Must be: license, company, or id"
         )
 
-    # Read file content
     content = await file.read()
 
-    # Generate unique key
+    # Strip EXIF from image-based documents (skip PDFs)
+    if file.content_type in EXIF_STRIPPABLE_TYPES:
+        content = await asyncio.to_thread(strip_exif, content, file.content_type)
+
     key = generate_document_key(user_id, document_type, file.filename)
 
-    # Upload to S3 (blocking boto3 call)
     try:
         url = await asyncio.to_thread(
             upload_file,
@@ -364,35 +260,12 @@ async def upload_document_direct(
         )
 
 
-# ============================================================================
-# FILE DELETION
-# ============================================================================
-
 async def delete_old_image(image_url: str) -> bool:
-    """
-    Delete old image from S3.
-
-    Use when user updates profile picture or listing images.
-
-    Args:
-        image_url: Full public URL of image
-
-    Returns:
-        True if deletion successful, False otherwise
-
-    Example:
-        >>> old_url = "https://bucket.s3.amazonaws.com/images/old_profile.jpg"
-        >>> await delete_old_image(old_url)
-        True
-    """
-    # Extract key from URL
+    """Delete old image from S3 when user updates profile picture or listing images."""
     key = extract_key_from_url(image_url)
 
     if not key:
         logger.warning(f"Could not extract key from URL: {image_url}")
         return False
 
-    # Delete file (blocking boto3 call)
     return await asyncio.to_thread(delete_file, key)
-
-

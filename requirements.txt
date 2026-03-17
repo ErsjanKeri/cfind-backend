@@ -27,6 +27,9 @@ boto3==1.37.0
 # Rate Limiting
 slowapi==0.1.9
 
+# Image Processing (EXIF stripping)
+Pillow==11.1.0
+
 # Utilities
 python-dateutil==2.9.0
 httpx==0.28.1

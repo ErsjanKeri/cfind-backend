@@ -2,8 +2,8 @@
 S3 client wrapper for AWS S3 and DigitalOcean Spaces.
 
 Provides:
-- Presigned URL generation for direct client-side upload
 - Direct file upload from server
+- Presigned GET URL generation for private file access
 - File deletion
 - URL generation
 
@@ -14,7 +14,7 @@ Supports both:
 
 import logging
 import uuid
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
 from datetime import datetime, timezone
 import boto3
 from botocore.client import Config
@@ -61,69 +61,8 @@ def get_s3_client():
 
 
 # ============================================================================
-# PRESIGNED URL GENERATION
+# PRESIGNED GET URL (for private file access)
 # ============================================================================
-
-def generate_presigned_post(
-    key: str,
-    content_type: str,
-    max_file_size: int = 10 * 1024 * 1024,  # 10 MB default
-    expiration: int = 3600,  # 1 hour default
-    acl: str = "public-read"
-) -> Dict[str, Any]:
-    """
-    Generate presigned POST URL for direct client-side upload to S3.
-
-    This allows clients to upload files directly to S3/Spaces without
-    going through the server, reducing server load and bandwidth.
-
-    Args:
-        key: S3 object key (file path in bucket)
-        content_type: MIME type (e.g., "image/jpeg", "application/pdf")
-        max_file_size: Maximum file size in bytes (default: 10 MB)
-        expiration: URL expiration in seconds (default: 1 hour)
-
-    Returns:
-        Dict containing:
-        - url: POST URL
-        - fields: Form fields to include in POST request
-
-    Example:
-        >>> presigned = generate_presigned_post(
-        ...     key="documents/license_123.pdf",
-        ...     content_type="application/pdf",
-        ...     max_file_size=5 * 1024 * 1024  # 5 MB
-        ... )
-        >>> # Client uploads with:
-        >>> # POST presigned['url']
-        >>> # with fields: presigned['fields']
-    """
-    s3 = get_s3_client()
-
-    try:
-        # Generate presigned POST
-        response = s3.generate_presigned_post(
-            Bucket=settings.AWS_BUCKET_NAME,
-            Key=key,
-            Fields={
-                'Content-Type': content_type,
-                'acl': acl,
-            },
-            Conditions=[
-                {'Content-Type': content_type},
-                {'acl': acl},
-                ['content-length-range', 0, max_file_size]  # File size limit
-            ],
-            ExpiresIn=expiration
-        )
-
-        logger.info(f"Generated presigned POST for key: {key}")
-        return response
-
-    except ClientError as e:
-        logger.error(f"Error generating presigned POST: {str(e)}")
-        raise
-
 
 def generate_presigned_get(
     key: str,

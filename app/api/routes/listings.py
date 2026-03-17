@@ -258,14 +258,22 @@ async def create_listing(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one image is required")
 
     # Create listing and return private view
+    is_admin = current_user.role == "admin"
     listing = await listing_repo.create_listing(db, agent_id, listing_data)
+
+    # Admin-created listings are pre-approved
+    if is_admin:
+        listing.status = "active"
+        await db.flush()
+
     # Use target_agent if admin created on behalf, otherwise current_user already has agent_profile
-    agent_for_response = target_agent if (current_user.role == "admin" and listing_data.agent_id) else current_user
+    agent_for_response = target_agent if (is_admin and listing_data.agent_id) else current_user
     listing_dict = listing_repo.transform_private_listing(listing, agent_for_response)
 
+    message = "Listing created successfully." if is_admin else "Listing created successfully. It is pending admin verification."
     return ListingCreateResponse(
         success=True,
-        message="Listing created successfully. It is pending admin verification.",
+        message=message,
         listing=listing_dict
     )
 

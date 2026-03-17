@@ -1,6 +1,6 @@
 """Application constants."""
 
-VALID_COUNTRY_CODES = ["al", "ae"]
+VALID_COUNTRY_CODES = ["ch", "ae", "al"]
 
 VALID_CATEGORIES = [
     "restaurant", "bar", "cafe", "retail", "hotel", "manufacturing",

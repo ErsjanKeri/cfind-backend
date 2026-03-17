@@ -55,8 +55,8 @@ TOOL_DECLARATIONS = [
             "properties": {
                 "country_code": {
                     "type": "string",
-                    "description": "Country code: 'al' (Albania) or 'ae' (UAE). Required.",
-                    "enum": ["al", "ae"],
+                    "description": "Country code: 'ch' (Switzerland), 'ae' (UAE), or 'al' (Albania). Required.",
+                    "enum": ["ch", "ae", "al"],
                 },
                 "category": {
                     "type": "string",
@@ -131,7 +131,7 @@ TOOL_DECLARATIONS = [
                 "country_code": {
                     "type": "string",
                     "description": "Optional. 'al' or 'ae' to get info for a specific country.",
-                    "enum": ["al", "ae"],
+                    "enum": ["ch", "ae", "al"],
                 },
             },
         },
@@ -176,8 +176,8 @@ AGENT_TOOL_DECLARATIONS = [
             "properties": {
                 "country_code": {
                     "type": "string",
-                    "description": "Country code: 'al' (Albania) or 'ae' (UAE). Required.",
-                    "enum": ["al", "ae"],
+                    "description": "Country code: 'ch' (Switzerland), 'ae' (UAE), or 'al' (Albania). Required.",
+                    "enum": ["ch", "ae", "al"],
                 },
                 "category": {
                     "type": "string",
@@ -231,7 +231,7 @@ AGENT_TOOL_DECLARATIONS = [
                 "country_code": {
                     "type": "string",
                     "description": "Country code filter.",
-                    "enum": ["al", "ae"],
+                    "enum": ["ch", "ae", "al"],
                 },
                 "category": {
                     "type": "string",
@@ -266,7 +266,7 @@ AGENT_TOOL_DECLARATIONS = [
                 "country_code": {
                     "type": "string",
                     "description": "Optional. 'al' or 'ae' to get info for a specific country.",
-                    "enum": ["al", "ae"],
+                    "enum": ["ch", "ae", "al"],
                 },
             },
         },
@@ -286,7 +286,7 @@ async def _execute_search_listings(db: AsyncSession, args: dict) -> dict:
     """Execute search_listings tool against the database."""
     from sqlalchemy import desc, asc
 
-    country_code = args.get("country_code", "al")
+    country_code = args.get("country_code", "ch")
     category = args.get("category")
     city = args.get("city")
     area = args.get("area")
@@ -425,7 +425,7 @@ async def _execute_get_listing_detail(db: AsyncSession, args: dict) -> dict:
         "city": listing.public_location_city_en,
         "area": listing.public_location_area,
         "country_code": country_code,
-        "country": "Albania" if country_code == "al" else "United Arab Emirates",
+        "country": {"ch": "Switzerland", "ae": "United Arab Emirates", "al": "Albania"}.get(country_code, country_code),
         "status": listing.status,
         "asking_price_eur": float(listing.asking_price_eur) if listing.asking_price_eur else None,
         "monthly_revenue_eur": float(listing.monthly_revenue_eur) if listing.monthly_revenue_eur else None,
@@ -482,7 +482,7 @@ async def _execute_search_demands(db: AsyncSession, args: dict) -> dict:
     """Search active buyer demands."""
     from sqlalchemy import desc
 
-    country_code = args.get("country_code", "al")
+    country_code = args.get("country_code", "ch")
     category = args.get("category")
     city = args.get("city")
     min_budget = args.get("min_budget")

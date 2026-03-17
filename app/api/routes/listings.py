@@ -223,7 +223,7 @@ async def create_listing(
     - ROI: (monthly_revenue * 12) / asking_price * 100
     - Created timestamp
 
-    **Default status:** "active" (published immediately)
+    **Default status:** "pending" (requires admin approval before going live)
 
     **Returns:** Private view (creator sees full details including real business name)
     """
@@ -265,7 +265,7 @@ async def create_listing(
 
     return ListingCreateResponse(
         success=True,
-        message="Listing created successfully",
+        message="Listing created successfully. It is pending admin verification.",
         listing=listing_dict
     )
 
@@ -315,13 +315,32 @@ async def update_listing(
     if current_user.role != "admin" and update_data.is_physically_verified is not None:
         update_data.is_physically_verified = None
 
-    # Update and return private view (reuse agent from initial fetch)
+    # Agent edits reset listing to pending for re-verification
+    is_admin = current_user.role == "admin"
+    if not is_admin and listing.status in ("active", "rejected"):
+        update_data.status = None  # Don't let agent set status directly
+
     updated_listing = await listing_repo.update_listing(db, listing_id, update_data)
-    listing_dict = listing_repo.transform_private_listing(updated_listing, agent)
+
+    # Reset to pending after update (so flush doesn't expire before we set it)
+    if not is_admin and listing.status in ("active", "rejected"):
+        updated_listing.status = "pending"
+        updated_listing.rejection_reason = None
+        updated_listing.rejected_at = None
+        await db.flush()
+
+    # Refetch to get clean state for transform
+    result = await listing_repo.get_listing_by_id(db, listing_id, mode="private")
+    listing, agent = result
+    listing_dict = listing_repo.transform_private_listing(listing, agent)
+
+    message = "Listing updated successfully"
+    if not is_admin and updated_listing.status == "pending":
+        message += ". It is now pending admin verification."
 
     return ListingUpdateResponse(
         success=True,
-        message="Listing updated successfully",
+        message=message,
         listing=listing_dict
     )
 

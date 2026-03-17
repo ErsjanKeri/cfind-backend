@@ -99,7 +99,7 @@ async def create_listing(
         id=uuid.uuid4(),
         agent_id=agent_id,
         country_code=listing_data.country_code,
-        status=listing_data.status or "active",
+        status="pending",
 
         # Public info
         public_title_en=listing_data.public_title_en,

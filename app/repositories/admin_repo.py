@@ -449,3 +449,63 @@ async def toggle_email_verification(
 
     logger.info(f"Admin toggled email verification for user {user_id}: {email_verified}")
     return user
+
+
+async def get_pending_listings(
+    db: AsyncSession,
+    page: int = 1,
+    limit: int = 20
+):
+    """Get listings pending admin verification."""
+    query = (
+        select(Listing, User)
+        .join(User, Listing.agent_id == User.id)
+        .options(selectinload(Listing.images), selectinload(User.agent_profile))
+        .where(Listing.status == "pending")
+        .order_by(Listing.created_at.asc())
+    )
+
+    count_query = select(func.count()).select_from(
+        select(Listing.id).where(Listing.status == "pending").subquery()
+    )
+    total = (await db.execute(count_query)).scalar()
+
+    offset = (page - 1) * limit
+    result = await db.execute(query.offset(offset).limit(limit))
+    return result.all(), total
+
+
+async def approve_listing(db: AsyncSession, listing_id: str) -> Optional[Listing]:
+    """Approve a pending listing — sets status to active."""
+    result = await db.execute(select(Listing).where(Listing.id == listing_id))
+    listing = result.scalar_one_or_none()
+    if not listing or listing.status != "pending":
+        return None
+
+    listing.status = "active"
+    listing.rejection_reason = None
+    listing.rejected_at = None
+    await db.flush()
+
+    logger.info(f"Admin approved listing {listing_id}")
+    return listing
+
+
+async def reject_listing(
+    db: AsyncSession,
+    listing_id: str,
+    reason: str
+) -> Optional[Listing]:
+    """Reject a pending listing with reason."""
+    result = await db.execute(select(Listing).where(Listing.id == listing_id))
+    listing = result.scalar_one_or_none()
+    if not listing or listing.status != "pending":
+        return None
+
+    listing.status = "rejected"
+    listing.rejection_reason = reason
+    listing.rejected_at = datetime.now(timezone.utc)
+    await db.flush()
+
+    logger.info(f"Admin rejected listing {listing_id}: {reason}")
+    return listing

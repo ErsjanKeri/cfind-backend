@@ -46,7 +46,7 @@ from app.schemas.geography import (
 )
 from app.repositories import admin_repo
 from app.repositories.user_repo import get_user_by_id
-from app.repositories import geography_repo
+from app.repositories import geography_repo, listing_repo
 from app.services.email_service import send_agent_rejection_email
 from app.repositories import promotion_repo
 from app.core.constants import VALID_COUNTRY_CODES
@@ -543,5 +543,63 @@ async def create_neighbourhood(
         message="Neighbourhood created successfully",
         neighbourhood=NeighbourhoodResponse.model_validate(neighbourhood),
     )
+
+
+@router.get(
+    "/listings/pending",
+    summary="Get pending listings",
+    description="Get listings awaiting admin verification"
+)
+async def get_pending_listings(
+    current_user: Annotated[User, Depends(RoleChecker(["admin"]))],
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    rows, total = await admin_repo.get_pending_listings(db, page, limit)
+    total_pages = (total + limit - 1) // limit
+    listings = [listing_repo.transform_private_listing(listing, agent) for listing, agent in rows]
+    return {
+        "success": True,
+        "listings": [l.model_dump() for l in listings],
+        "total": total,
+        "page": page,
+        "total_pages": total_pages,
+    }
+
+
+@router.post(
+    "/listings/{listing_id}/approve",
+    summary="Approve listing",
+    description="Approve a pending listing — makes it publicly visible"
+)
+async def approve_listing(
+    listing_id: str,
+    current_user: Annotated[User, Depends(RoleChecker(["admin"]))],
+    _: None = Depends(verify_csrf_token),
+    db: AsyncSession = Depends(get_db),
+):
+    listing = await admin_repo.approve_listing(db, listing_id)
+    if not listing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found or not pending")
+    return {"success": True, "message": "Listing approved"}
+
+
+@router.post(
+    "/listings/{listing_id}/reject",
+    summary="Reject listing",
+    description="Reject a pending listing with a reason"
+)
+async def reject_listing(
+    listing_id: str,
+    data: AgentRejectRequest,
+    current_user: Annotated[User, Depends(RoleChecker(["admin"]))],
+    _: None = Depends(verify_csrf_token),
+    db: AsyncSession = Depends(get_db),
+):
+    listing = await admin_repo.reject_listing(db, listing_id, data.reason)
+    if not listing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found or not pending")
+    return {"success": True, "message": "Listing rejected"}
 
 

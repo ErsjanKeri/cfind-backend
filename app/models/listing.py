@@ -16,8 +16,9 @@ class Listing(Base):
     - Private fields: Shown only to listing owner (agent) or admin
 
     Status values:
-    - draft: Not published yet
-    - active: Published and visible
+    - pending: Awaiting admin verification (default for new/edited listings)
+    - active: Approved by admin, visible to public
+    - rejected: Rejected by admin (agent can edit and resubmit)
     - sold: Marked as sold (hidden from public)
     - inactive: Temporarily paused (hidden from public)
 
@@ -33,8 +34,10 @@ class Listing(Base):
     agent_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     country_code = Column(String(2), ForeignKey("countries.code"), nullable=False, default="al", index=True)
 
-    # Status: "draft" | "active" | "sold" | "inactive"
-    status = Column(String, default="draft", nullable=False, index=True)
+    # Status: "pending" | "active" | "rejected" | "sold" | "inactive"
+    status = Column(String, default="pending", nullable=False, index=True)
+    rejection_reason = Column(String, nullable=True)
+    rejected_at = Column(DateTime(timezone=True), nullable=True)
 
     # ========================================================================
     # PROMOTION SYSTEM (PropertyFinder-style)

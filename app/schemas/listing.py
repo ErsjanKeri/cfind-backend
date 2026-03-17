@@ -93,7 +93,6 @@ class ListingCreate(BaseModel):
     # ADMIN FIELDS (optional, only for admin creating on behalf of agent)
     # ========================================================================
     agent_id: Optional[str] = None  # Admin can create listing for specific agent
-    status: Optional[str] = Field(default="active", pattern="^(draft|active|sold|inactive)$")
 
     model_config = {
         "json_schema_extra": {
@@ -160,8 +159,8 @@ class ListingUpdate(BaseModel):
     employee_count: Optional[int] = Field(None, ge=0)
     years_in_operation: Optional[int] = Field(None, ge=0)
 
-    # Status
-    status: Optional[str] = Field(None, pattern="^(draft|active|sold|inactive)$")
+    # Status (agents can only set sold/inactive, admin approval handles pending→active)
+    status: Optional[str] = Field(None, pattern="^(sold|inactive)$")
 
     # Images (if provided, replaces all existing images)
     images: Optional[List[ListingImageCreate]] = Field(None, min_length=1, max_length=50)
@@ -206,6 +205,10 @@ class _ListingBase(BaseSchema):
 
     # Images
     images: List[ListingImageSchema]
+
+    # Verification
+    rejection_reason: Optional[str] = None
+    rejected_at: Optional[datetime] = None
 
     # Metadata
     view_count: int
